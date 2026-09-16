@@ -2,33 +2,25 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | 日本語 | [Deutsch](README.de.md) | [Français](README.fr.md) | [Italiano](README.it.md) | [Português](README.pt.md) | [العربية](README.ar.md)
 
-`at` ジョブで動く Claude Code の拡張機能です。
+Claude Code が代わりにやってくれない 3 つのことを、あなたがキーボードの前にいない間に片づけます。
 
-- **再開** —— tmux 内のセッションが利用制限で停止した場合、制限がリセットされ次第その pane に `continue` を入力します。
-- **維持** —— 再開対象がなければ、小さな Haiku リクエストを送って新しい 5 時間枠を開始します。
+- **再開** —— 利用制限で止まったセッションが、制限のリセットと同時に自分で動き出し、途中だった作業の続きを進めます。
+- **窓を開けておく** —— 再開すべきものが無くても新しい 5 時間の窓を開け、そのリセット時刻が勤務時間の中ではなく外に来るようにします。
+- **通知** —— 自力で続けられなくなったときに知らせます。Bark、ntfy、メール、そのほか繋ぎたいものは何でも。
 
 ## 何が嬉しいか
 
-**5 時間の上限に達しても自動で復帰する。** 通常は上限に当たった時点でセッションが止まり、戻ってきて手動で再開することになります。ここではリセットと同時に `continue` をその pane へ打ち込むので、寝ている間や離席中でも作業が続きから再開します。
+**5 時間の上限からの復帰。** 通常は上限に達した時点でセッションが止まり、後で戻って手で再開することになります。Claude Plus は制限がリセットされた瞬間に代わりに再開するので、作業は中断したところから続きます —— 眠っている間も、席を外している間も。
 
-**窓をいつ開けたかが、いつ終わるかを決める。** 5 時間の窓は固定の時刻ではなく、最初のリクエストから始まります。9 時に仕事を始めてそのまま使えば窓は 9:00-14:00。11 時に枠を使い切れば 14:00 まで待つしかありません。もし 6 時に小さなリクエストが窓を開けていれば、その窓は 11:00 に期限切れ —— ちょうど枠が尽きる時刻 —— で、新しい枠がすでに用意されています。窓を回し続けるとは、リセット時刻を勤務時間の真ん中ではなく手前へ押し出すということです。
+**窓をいつ開けたかが、いつ終わるかを決める。** 5 時間の窓は固定の時刻ではなく、最初のリクエストから始まります。9 時に仕事を始めてそのまま使えば窓は 9:00〜14:00。11 時に枠を使い切れば 14:00 まで待つしかありません。もし 6 時に小さなリクエストが窓を開けていれば、その窓は 11:00 に期限切れ —— ちょうど枠が尽きる時刻 —— で、新しい枠がすでに用意されています。窓を回し続けるとは、リセット時刻を勤務時間の真ん中ではなく手前へ押し出すということです。
 
-## 仕組み
+**助けにならなくなった時がわかる。** 自動復帰が効くのはログインが有効な間だけで、期限が切れれば何も動きません。Claude Plus はそれを見分けて知らせます。週末じゅう黙って失敗し続けたりはしません。
 
-1. インストール時に `~/.claude/settings.json` を書き換えます。`statusLine` に加えて 3 つのフック —— `StopFailure`（matcher は `rate_limit`）、`UserPromptSubmit`、`SessionEnd` —— を登録します。既存の statusLine コマンドは保存され、そのまま表示されます。
-2. statusLine の更新ごとに `rate_limits.five_hour.resets_at` を読み取り、リセット時刻 + 15 秒に `at` ジョブを登録します。
-3. 利用制限に達すると、そのセッション（tmux socket、pane、window、`pane_current_command`、cwd）を `state/pending/` に記録し、同じジョブを登録します。
-4. リセット時刻にジョブが `scheduled` を実行します。
-   - 再開対象あり → 各 pane へ `send-keys continue`。セッションごとに最大 2 回まで送信し、90 秒後に再確認します。
-   - 再開対象なし → `claude -p --model haiku --safe-mode --tools "" 'Reply only OK.'` を実行し、リクエスト開始時刻を基準に次回を 5 時間 + 15 秒後と見積もって登録します。
-5. 自分で入力した場合（`UserPromptSubmit`）やセッション終了時（`SessionEnd`）に、該当する再開待ち記録は削除されます。
-6. 7 日制限に達している場合は、すべて週次リセットまで待機します。
+## やらないこと
 
-### 誤送信の防止
+再開とは、あなたが作業していた端末に文字を打ち込むことです。だからどこに打つかについては慎重です。セッションがまだそこにあり、手を触れられておらず、制限で止まった時のままである場合にだけ再開します。閉じてしまった、別の作業に移った、その端末で何か他のことを始めた —— そうした場合、Claude Plus は何もせず、黙っています。tmux の外で動いているセッションはそもそも再開しません。打ち込む先が無いからです。
 
-`continue` を送るのは、pane が今も存在し、同じ tmux セッションに属し、制限時と同じコマンドを実行している場合だけです。そうでなければ記録は `state/stale/` へ退避され、何も入力しません。tmux 外のセッションはログに残すだけです —— 入力先の pane がありません。
-
-warm-up の失敗は 60 秒 / 120 秒 / 300 秒 / 600 秒後に再試行します。出力がログイン切れらしい場合は自動 warm-up を一時停止し、`state/auth_required` を書き込み（`status` に `RELOGIN MAY BE REQUIRED` と表示）、1 時間後に再確認します。
+利用制限そのものは決して知らせません。あれは日常的なもので、再開が処理しますし、毎回知らせればただの雑音になります。
 
 ## 必要なもの
 
@@ -52,64 +44,53 @@ cd claude-plus
 bash install-claude-plus.sh
 ```
 
-旧バージョンがあれば先に削除します —— その `at` ジョブ、`statusLine` とフックの項目、`~/.claude/claude-plus/` —— のため、インストーラの再実行がそのままクリーンな更新になります。他のフックには手を触れません。`settings.json` は `settings.json.claude-plus-install-backup.<タイムスタンプ>` としてバックアップされます。
-
-インストール後、Claude Code 内の `/hooks` で `StopFailure`、`UserPromptSubmit`、`SessionEnd` を確認してください。
+インストーラは statusLine を引き継ぎ、自身のフックを追加します。既存の statusLine はそのまま表示され、他のツールのフックにも手を触れません。`settings.json` は先にバックアップされ、再実行は二重インストールではなくクリーンな更新になります。
 
 ## 使い方
 
+普段は何も実行する必要がありません —— ひとりでに働きます。様子を見たいときは：
+
 ```bash
-~/.claude/claude-plus/claude-plus.sh status   # バージョン、スケジュール、再開待ち件数、認証状態
+~/.claude/claude-plus/claude-plus.sh status   # 何が予約され、何が待ち、認証は有効か
 ~/.claude/claude-plus/claude-plus.sh pending  # 再開待ちのセッション
-~/.claude/claude-plus/claude-plus.sh notify-test  # テスト通知を自分に送る
-tail -f ~/.claude/claude-plus/claude-plus.log # ログ確認
+tail -f ~/.claude/claude-plus/claude-plus.log # 何をしてきたか
 ```
 
 ## 通知
 
-Claude Plus は普段は黙っていて、あなたの対応が要るときだけ知らせます。
-`~/.claude/claude-plus/notify.sh`（実行可能ファイルなら何でも構いません）を
-次の 3 つのイベントで実行します。
+Claude Plus は普段は黙っていて、あなたの対応が要るときだけ知らせます。伝えるのは次の 3 つだけです。
 
-| イベント | タイミング |
-|----------|------------|
-| `auth-required` | Claude Code がサインアウトしており、窓を開けられない |
-| `warmup-failing` | warm-up が 3 回続けて失敗した |
-| `recovered` | 上記の状態から復旧した |
+| | |
+|---|---|
+| **サインアウト** | Claude Code のログインが切れており、入り直すまで何も開けない |
+| **連続して失敗** | warm-up が何度か続けて失敗した |
+| **復旧** | 上のいずれかから元に戻った |
 
-各イベントはその状態に**入った時**に一度だけ発火し、リトライのたびには鳴りません。
-夜間に問題が起きても、届くのは 8 通ではなく 1 通です。
+それぞれ一度だけ知らせ、リトライのたびには鳴りません。夜間に問題が起きても届くのは 1 通です。
 
-Bark、ntfy、SMTP メールのサンプルが `~/.claude/claude-plus/notify/` に
-インストールされます。ひとつ選び、自分のキーやサーバーを書いて試してください。
+受け取り方を選ぶには、見本をひとつコピーして自分のキーやサーバーを書き入れます。
 
 ```bash
 cd ~/.claude/claude-plus
-cp notify/bark.sh.sample notify.sh
-chmod +x notify.sh          # メール版はパスワードを持つので 700 に
+cp notify/bark.sh.sample notify.sh      # ntfy.sh.sample、email.sh.sample でも可
+chmod +x notify.sh                      # メール版はパスワードを持つので 700 に
 $EDITOR notify.sh
-./claude-plus.sh notify-test
+./claude-plus.sh notify-test            # 実際に届くか確かめる
 ```
 
-スクリプトには `CP_EVENT`、`CP_MESSAGE`、`CP_HOST` が環境変数として渡されるので、
-Telegram、Slack、webhook、`mail` などへの変更はその `curl` 一本を書き換えるだけです。
-再インストールしても `notify.sh` は残ります。
-
-利用制限そのものは通知しません。あれは日常的なもので自動再開が処理しますし、
-毎回知らせればただの雑音になります。
+通知スクリプトは単なる実行可能ファイルで、`CP_EVENT`、`CP_MESSAGE`、`CP_HOST` を受け取ります。Telegram でも Slack でも webhook でも `mail` でも、書き換えるのは一行です。あなたが用意したものは再インストールしても残ります。
 
 ## ファイル
 
-| パス | 説明 |
-|------|------|
-| `~/.claude/claude-plus/claude-plus.sh` | メインスクリプト |
-| `~/.claude/claude-plus/state/` | リセット時刻、ジョブ ID、失敗回数、認証フラグ |
-| `~/.claude/claude-plus/state/pending/` | 制限で停止し再開を待つセッション |
-| `~/.claude/claude-plus/state/stale/` | pane が変化したため破棄された再開待ち記録 |
-| `~/.claude/claude-plus/original-statusline-command` | 既存の statusLine コマンド |
-| `~/.claude/claude-plus/notify.sh` | 設定した通知スクリプト（あれば） |
-| `~/.claude/claude-plus/notify/` | コピー元の通知スクリプト見本 |
-| `~/.claude/claude-plus/claude-plus.log` | ログ |
+すべて `~/.claude/claude-plus/` の下にあります。
+
+| | |
+|---|---|
+| `claude-plus.sh` | スクリプト本体 |
+| `notify.sh` | あなたが用意した通知スクリプト |
+| `notify/` | コピー元の見本 |
+| `claude-plus.log` | 何をしてきたか |
+| `state/` | 内部の記録 |
 
 ## アンインストール
 

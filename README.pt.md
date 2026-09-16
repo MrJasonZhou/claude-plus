@@ -2,33 +2,25 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Italiano](README.it.md) | Português | [العربية](README.ar.md)
 
-Extensões para o Claude Code, movidas por tarefas `at`:
+Três coisas que o Claude Code não faz por você, resolvidas enquanto você está longe do teclado.
 
-- **Retomada** — quando uma sessão para num limite de uso dentro do tmux, `continue` é digitado nesse pane assim que o limite é reiniciado.
-- **Manutenção** — se não há nada a retomar, um pedido Haiku mínimo abre uma nova janela de 5 horas.
+- **Retomada** — uma sessão parada por um limite de uso volta a andar sozinha no instante em que o limite é reiniciado, seguindo o trabalho que estava pela metade.
+- **Janela sempre aberta** — se não há nada a retomar, uma nova janela de 5 horas é aberta mesmo assim, para que seu reinício caia fora do seu horário de trabalho em vez de no meio dele.
+- **Aviso** — quando não consegue mais seguir sozinho, ele avisa: Bark, ntfy, e-mail, ou qualquer outro canal que você queira ligar.
 
 ## Para que serve
 
-**Recuperar de um limite de 5 horas.** Normalmente, atingir o teto significa que a sessão simplesmente para e você volta mais tarde para reiniciá-la à mão. Aqui o `continue` é digitado no pane no instante em que o limite é reiniciado, então o trabalho segue de onde parou — inclusive enquanto você dorme ou está longe da mesa.
+**Recuperar de um limite de 5 horas.** Normalmente, atingir o teto significa que a sessão simplesmente para e você volta mais tarde para reiniciá-la à mão. O Claude Plus reinicia por você no instante em que o limite é reiniciado, então o trabalho segue de onde parou — inclusive enquanto você dorme ou está longe da mesa.
 
 **Quando a janela abre decide quando ela termina.** Uma janela de 5 horas começa no seu primeiro pedido, não numa hora fixa. Comece a trabalhar às 9h e a janela vai das 9h às 14h; esgote a cota às 11h e você fica travado até as 14h. Se em vez disso um pedido mínimo tivesse aberto a janela às 6h, ela expiraria às 11h — exatamente quando você fica sem nada — com uma cota nova já esperando. Manter uma janela sempre aberta empurra o reinício para antes do seu horário de trabalho, em vez de deixá-lo no meio dele.
 
-## Como funciona
+**Saber quando ele parou de ajudar.** A recuperação automática funciona enquanto seu login for válido; assim que expira, nada mais funciona. O Claude Plus percebe esse caso e avisa, em vez de falhar em silêncio o fim de semana inteiro.
 
-1. A instalação reescreve `~/.claude/settings.json`: `statusLine` e três hooks — `StopFailure` (matcher `rate_limit`), `UserPromptSubmit`, `SessionEnd`. Seu comando de status line existente é guardado e continua sendo exibido.
-2. Cada atualização da status line lê `rate_limits.five_hour.resets_at` e agenda uma tarefa `at` para o reinício + 15 s.
-3. Atingir um limite registra a sessão (socket tmux, pane, janela, `pane_current_command`, cwd) em `state/pending/` e agenda a mesma tarefa.
-4. No reinício a tarefa executa `scheduled`:
-   - Sessões pendentes → `send-keys continue` para cada pane, no máximo 2 tentativas por sessão, depois nova verificação em 90 s.
-   - Nada pendente → `claude -p --model haiku --safe-mode --tools "" 'Reply only OK.'`, e a próxima tarefa é estimada em 5 h + 15 s a partir do início do pedido.
-5. As entradas pendentes são apagadas assim que você digita algo (`UserPromptSubmit`) ou a sessão termina (`SessionEnd`).
-6. Limite de 7 dias em 100% → tudo espera o reinício semanal.
+## O que ele não vai fazer
 
-### Proteções
+Retomar significa digitar no terminal em que você estava trabalhando, por isso ele é cuidadoso quanto a onde digita. Uma sessão só é retomada se ainda estiver lá, intacta, exatamente como o limite a deixou. Se você a fechou, seguiu para outra coisa, ou iniciou outra coisa naquele terminal, o Claude Plus não mexe e fica calado. Sessões fora do tmux nunca são retomadas — não há onde digitar.
 
-Um `continue` só é enviado se o pane ainda existe, ainda pertence à mesma sessão tmux e ainda executa o mesmo comando de quando o limite foi atingido. Caso contrário a entrada é arquivada em `state/stale/` e nada é digitado. Sessões fora do tmux apenas geram registro no log — não há pane onde escrever.
-
-Um warm-up que falha é repetido após 60 s / 120 s / 300 s / 600 s. Se a saída parecer um login expirado, o warm-up automático pausa, `state/auth_required` é escrito (`status` mostra `RELOGIN MAY BE REQUIRED`) e há nova verificação em 1 hora.
+Os limites de uso em si nunca são anunciados. São rotina, a retomada cuida deles, e uma mensagem a cada vez seria apenas ruído.
 
 ## Requisitos
 
@@ -52,63 +44,53 @@ cd claude-plus
 bash install-claude-plus.sh
 ```
 
-Qualquer instalação anterior é removida primeiro — suas tarefas `at`, suas entradas de `statusLine` e de hooks, e `~/.claude/claude-plus/` — de modo que rodar o instalador de novo é uma atualização limpa. Hooks de outras ferramentas ficam intactos. O `settings.json` é salvo como `settings.json.claude-plus-install-backup.<timestamp>`.
-
-Depois, dentro do Claude Code, confira com `/hooks` se há `StopFailure`, `UserPromptSubmit` e `SessionEnd`.
+O instalador assume a sua status line e adiciona os próprios hooks, mantendo a status line que você já tinha e sem tocar nos hooks de outras ferramentas. Seu `settings.json` é salvo antes, e rodar o instalador de novo é uma atualização limpa, não uma segunda cópia.
 
 ## Uso
 
+No dia a dia não há nada para executar — ele trabalha sozinho. Quando quiser olhar:
+
 ```bash
-~/.claude/claude-plus/claude-plus.sh status   # versão, agendamento, pendentes, estado da autenticação
+~/.claude/claude-plus/claude-plus.sh status   # o que está agendado, o que espera, a autenticação ainda vale
 ~/.claude/claude-plus/claude-plus.sh pending  # sessões esperando retomada
-~/.claude/claude-plus/claude-plus.sh notify-test  # enviar a si mesmo uma notificação de teste
-tail -f ~/.claude/claude-plus/claude-plus.log # log
+tail -f ~/.claude/claude-plus/claude-plus.log # o que ele andou fazendo
 ```
 
-## Notificações
+## Avisos
 
-O Claude Plus fica quieto enquanto nada precisa de você. Ele executa
-`~/.claude/claude-plus/notify.sh` — qualquer executável — em três eventos:
+O Claude Plus fica quieto enquanto nada precisa de você, e informa exatamente três coisas:
 
-| Evento | Quando |
-|--------|--------|
-| `auth-required` | O Claude Code está desconectado, nenhuma janela pode ser aberta |
-| `warmup-failing` | Três warm-ups falharam seguidos |
-| `recovered` | Os warm-ups voltaram a funcionar depois de um dos casos acima |
+| | |
+|---|---|
+| **Desconectado** | Seu login do Claude Code expirou; nada pode ser aberto até você entrar de novo |
+| **Falhas repetidas** | Vários warm-ups seguidos falharam |
+| **De volta ao normal** | Ele se recuperou de um dos casos acima |
 
-Cada evento dispara uma única vez ao entrar naquele estado, não a cada nova tentativa:
-um problema durante a noite custa uma mensagem em vez de oito.
+Cada um é anunciado uma única vez, não a cada nova tentativa: um problema durante a noite custa uma só mensagem.
 
-Exemplos para Bark, ntfy e e-mail SMTP são instalados em
-`~/.claude/claude-plus/notify/`. Escolha um, preencha sua chave ou servidor e teste:
+Para escolher como receber o aviso, copie um dos exemplos e preencha sua chave ou servidor:
 
 ```bash
 cd ~/.claude/claude-plus
-cp notify/bark.sh.sample notify.sh
-chmod +x notify.sh          # use 700 no de e-mail, ele guarda uma senha
+cp notify/bark.sh.sample notify.sh      # ou ntfy.sh.sample, email.sh.sample
+chmod +x notify.sh                      # use 700 no de e-mail, ele guarda uma senha
 $EDITOR notify.sh
-./claude-plus.sh notify-test
+./claude-plus.sh notify-test            # confirme que chega até você
 ```
 
-O script roda com `CP_EVENT`, `CP_MESSAGE` e `CP_HOST` no ambiente, então qualquer
-outra coisa — Telegram, Slack, um webhook, `mail` — é questão de reescrever aquele
-único `curl`. Reinstalar preserva o seu `notify.sh`.
-
-Os limites de uso em si nunca geram notificação: são rotina, a retomada cuida deles,
-e uma mensagem a cada vez seria apenas ruído.
+O notificador é apenas um executável que recebe `CP_EVENT`, `CP_MESSAGE` e `CP_HOST`, então Telegram, Slack, um webhook ou `mail` são questão de reescrever uma linha. Sua cópia sobrevive a reinstalações.
 
 ## Arquivos
 
-| Caminho | Descrição |
-|---------|-----------|
-| `~/.claude/claude-plus/claude-plus.sh` | Script principal |
-| `~/.claude/claude-plus/state/` | Horários de reinício, id da tarefa, contagem de falhas, flag de autenticação |
-| `~/.claude/claude-plus/state/pending/` | Sessões paradas por um limite, esperando retomada |
-| `~/.claude/claude-plus/state/stale/` | Entradas descartadas porque o pane mudou |
-| `~/.claude/claude-plus/original-statusline-command` | Seu comando de status line anterior |
-| `~/.claude/claude-plus/notify.sh` | Seu script de notificação, se instalou um |
-| `~/.claude/claude-plus/notify/` | Exemplos de scripts para copiar |
-| `~/.claude/claude-plus/claude-plus.log` | Log |
+Está tudo em `~/.claude/claude-plus/`:
+
+| | |
+|---|---|
+| `claude-plus.sh` | O script em si |
+| `notify.sh` | Seu notificador, depois de configurado |
+| `notify/` | Exemplos para copiar |
+| `claude-plus.log` | O que ele andou fazendo |
+| `state/` | Controle interno |
 
 ## Desinstalação
 
