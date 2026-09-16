@@ -41,7 +41,7 @@ sudo systemctl enable --now atd
 ## 安装
 
 ```bash
-npx @mrjasonzhou/claude-plus
+npx @claude-plus/claude-plus
 ```
 
 或者从源码安装：

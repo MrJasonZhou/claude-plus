@@ -41,7 +41,7 @@ sudo systemctl enable --now atd
 ## インストール
 
 ```bash
-npx @mrjasonzhou/claude-plus
+npx @claude-plus/claude-plus
 ```
 
 クローンから実行する場合：

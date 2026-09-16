@@ -41,7 +41,7 @@ sudo systemctl enable --now atd
 ## التثبيت
 
 ```bash
-npx @mrjasonzhou/claude-plus
+npx @claude-plus/claude-plus
 ```
 
 أو من نسخة مستنسخة:

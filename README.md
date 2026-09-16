@@ -41,7 +41,7 @@ sudo systemctl enable --now atd
 ## Install
 
 ```bash
-npx @mrjasonzhou/claude-plus
+npx @claude-plus/claude-plus
 ```
 
 Or from a clone:

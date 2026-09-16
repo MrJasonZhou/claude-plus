@@ -41,7 +41,7 @@ sudo systemctl enable --now atd
 ## Installazione
 
 ```bash
-npx @mrjasonzhou/claude-plus
+npx @claude-plus/claude-plus
 ```
 
 Oppure da un clone:
