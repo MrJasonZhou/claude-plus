@@ -1,6 +1,6 @@
 # Claude Plus
 
-English | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
+English | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Italiano](README.it.md) | [Português](README.pt.md) | [العربية](README.ar.md)
 
 Enhancements for Claude Code, driven by `at` jobs:
 

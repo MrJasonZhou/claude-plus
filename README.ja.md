@@ -1,6 +1,6 @@
 # Claude Plus
 
-[English](README.md) | [简体中文](README.zh-CN.md) | 日本語
+[English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | 日本語 | [Deutsch](README.de.md) | [Français](README.fr.md) | [Italiano](README.it.md) | [Português](README.pt.md) | [العربية](README.ar.md)
 
 `at` ジョブで動く Claude Code の拡張機能です。
 

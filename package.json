@@ -8,9 +8,7 @@
   "files": [
     "install-claude-plus.sh",
     "notify",
-    "README.md",
-    "README.zh-CN.md",
-    "README.ja.md",
+    "README*.md",
     "LICENSE"
   ],
   "keywords": [

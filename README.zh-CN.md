@@ -1,6 +1,6 @@
 # Claude Plus
 
-[English](README.md) | 简体中文 | [日本語](README.ja.md)
+[English](README.md) | 简体中文 | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Italiano](README.it.md) | [Português](README.pt.md) | [العربية](README.ar.md)
 
 对 Claude Code 的增强，均由 `at` 任务驱动：
 
