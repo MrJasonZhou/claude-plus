@@ -61,8 +61,36 @@ bash install-claude-plus.sh
 ```bash
 ~/.claude/claude-plus/claude-plus.sh status   # 版本、调度、待续跑数量、认证状态
 ~/.claude/claude-plus/claude-plus.sh pending  # 等待续跑的会话
+~/.claude/claude-plus/claude-plus.sh notify-test  # 给自己发一条测试通知
 tail -f ~/.claude/claude-plus/claude-plus.log # 查看日志
 ```
+
+## 通知
+
+Claude Plus 平时不出声，只在需要你处理时才响。它会执行
+`~/.claude/claude-plus/notify.sh`（任何可执行文件都行），触发事件有三个：
+
+| 事件 | 什么时候 |
+|------|----------|
+| `auth-required` | Claude Code 已登出，无法开启窗口 |
+| `warmup-failing` | 连续三次保温失败 |
+| `recovered` | 上述状态恢复正常 |
+
+每个事件只在**进入**该状态时发一次，不会每次重试都发，所以过夜出问题只会收到一条消息，而不是八条。
+
+Bark、ntfy 和 SMTP 邮件的示例脚本会装到 `~/.claude/claude-plus/notify/`。挑一个，填上你自己的 key 或服务器，然后测试：
+
+```bash
+cd ~/.claude/claude-plus
+cp notify/bark.sh.sample notify.sh
+chmod +x notify.sh          # 邮件那个用 700，里面有密码
+$EDITOR notify.sh
+./claude-plus.sh notify-test
+```
+
+脚本运行时环境里有 `CP_EVENT`、`CP_MESSAGE`、`CP_HOST`，所以换成 Telegram、Slack、webhook 或 `mail`，无非是改那一条 `curl`。重新安装不会覆盖你的 `notify.sh`。
+
+撞到用量上限本身不会通知：那是常态，自动续跑会处理，每次都提醒只会变成噪音。
 
 ## 文件
 
@@ -73,6 +101,8 @@ tail -f ~/.claude/claude-plus/claude-plus.log # 查看日志
 | `~/.claude/claude-plus/state/pending/` | 撞限后等待续跑的会话 |
 | `~/.claude/claude-plus/state/stale/` | 因 pane 已变化而放弃的待续跑记录 |
 | `~/.claude/claude-plus/original-statusline-command` | 原有的 status line 命令 |
+| `~/.claude/claude-plus/notify.sh` | 你配置的通知脚本（如果有） |
+| `~/.claude/claude-plus/notify/` | 可拷贝的通知脚本示例 |
 | `~/.claude/claude-plus/claude-plus.log` | 日志 |
 
 ## 卸载

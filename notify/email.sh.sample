@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Email notifier for Claude Plus, sent straight over SMTP with curl.
+# No local MTA needed.
+#
+# Install it, then fill in your own server and credentials below:
+#
+#   cp ~/.claude/claude-plus/notify/email.sh.sample ~/.claude/claude-plus/notify.sh
+#   chmod 700 ~/.claude/claude-plus/notify.sh
+#   ~/.claude/claude-plus/claude-plus.sh notify-test
+#
+# This file holds a password, so keep it readable only by you - mode 700
+# above makes it executable and private at the same time.
+#
+# For Gmail, SMTP_PASS has to be an app password, not the account password.
+# Other providers usually want port 465 with smtps://, or 587 with smtp://
+# plus --ssl-reqd, which is already passed below.
+#
+# Claude Plus runs this script with CP_EVENT, CP_MESSAGE and CP_HOST set.
+
+set -u
+
+SMTP_URL="smtps://smtp.gmail.com:465"
+SMTP_USER="you@example.com"
+SMTP_PASS="your-app-password"
+MAIL_FROM="$SMTP_USER"
+MAIL_TO="you@example.com"
+
+curl -fsS -o /dev/null \
+    --max-time 30 \
+    --url "$SMTP_URL" \
+    --ssl-reqd \
+    --user "$SMTP_USER:$SMTP_PASS" \
+    --mail-from "$MAIL_FROM" \
+    --mail-rcpt "$MAIL_TO" \
+    --upload-file - <<MAIL
+From: Claude Plus <$MAIL_FROM>
+To: $MAIL_TO
+Subject: [Claude Plus] $CP_EVENT on $CP_HOST
+Date: $(date -R)
+
+$CP_MESSAGE
+MAIL

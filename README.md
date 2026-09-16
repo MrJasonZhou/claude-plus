@@ -61,8 +61,42 @@ Afterwards, check `/hooks` inside Claude Code for `StopFailure`, `UserPromptSubm
 ```bash
 ~/.claude/claude-plus/claude-plus.sh status   # version, schedule, pending count, auth status
 ~/.claude/claude-plus/claude-plus.sh pending  # sessions waiting to be resumed
+~/.claude/claude-plus/claude-plus.sh notify-test  # send yourself a test notification
 tail -f ~/.claude/claude-plus/claude-plus.log # log
 ```
+
+## Notifications
+
+Claude Plus stays quiet unless something needs you. It runs
+`~/.claude/claude-plus/notify.sh` — any executable you like — on three events:
+
+| Event | When |
+|-------|------|
+| `auth-required` | Claude Code is signed out, so no window can be opened |
+| `warmup-failing` | Three warmups have failed in a row |
+| `recovered` | Warmups are succeeding again after either of the above |
+
+Each event fires once on the way into that state, not on every retry, so an
+overnight problem costs you one message instead of eight.
+
+Samples for Bark, ntfy and SMTP email are installed under
+`~/.claude/claude-plus/notify/`. Pick one, fill in your own key or server,
+and test it:
+
+```bash
+cd ~/.claude/claude-plus
+cp notify/bark.sh.sample notify.sh
+chmod +x notify.sh          # use 700 for the email one, it holds a password
+$EDITOR notify.sh
+./claude-plus.sh notify-test
+```
+
+The script is run with `CP_EVENT`, `CP_MESSAGE` and `CP_HOST` in its
+environment, so anything else — Telegram, Slack, a webhook, `mail` — is a
+matter of rewriting that one `curl`. Reinstalling keeps your `notify.sh`.
+
+Rate limits themselves are never notified: they are routine, the resume
+handles them, and a message each time would only be noise.
 
 ## Files
 
@@ -73,6 +107,8 @@ tail -f ~/.claude/claude-plus/claude-plus.log # log
 | `~/.claude/claude-plus/state/pending/` | Rate-limited sessions waiting to be resumed |
 | `~/.claude/claude-plus/state/stale/` | Pending entries dropped because the pane changed |
 | `~/.claude/claude-plus/original-statusline-command` | Your previous status line command |
+| `~/.claude/claude-plus/notify.sh` | Your notifier, if you installed one |
+| `~/.claude/claude-plus/notify/` | Sample notifiers to copy from |
 | `~/.claude/claude-plus/claude-plus.log` | Log |
 
 ## Uninstall

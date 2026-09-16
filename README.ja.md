@@ -61,8 +61,42 @@ bash install-claude-plus.sh
 ```bash
 ~/.claude/claude-plus/claude-plus.sh status   # バージョン、スケジュール、再開待ち件数、認証状態
 ~/.claude/claude-plus/claude-plus.sh pending  # 再開待ちのセッション
+~/.claude/claude-plus/claude-plus.sh notify-test  # テスト通知を自分に送る
 tail -f ~/.claude/claude-plus/claude-plus.log # ログ確認
 ```
+
+## 通知
+
+Claude Plus は普段は黙っていて、あなたの対応が要るときだけ知らせます。
+`~/.claude/claude-plus/notify.sh`（実行可能ファイルなら何でも構いません）を
+次の 3 つのイベントで実行します。
+
+| イベント | タイミング |
+|----------|------------|
+| `auth-required` | Claude Code がサインアウトしており、窓を開けられない |
+| `warmup-failing` | warm-up が 3 回続けて失敗した |
+| `recovered` | 上記の状態から復旧した |
+
+各イベントはその状態に**入った時**に一度だけ発火し、リトライのたびには鳴りません。
+夜間に問題が起きても、届くのは 8 通ではなく 1 通です。
+
+Bark、ntfy、SMTP メールのサンプルが `~/.claude/claude-plus/notify/` に
+インストールされます。ひとつ選び、自分のキーやサーバーを書いて試してください。
+
+```bash
+cd ~/.claude/claude-plus
+cp notify/bark.sh.sample notify.sh
+chmod +x notify.sh          # メール版はパスワードを持つので 700 に
+$EDITOR notify.sh
+./claude-plus.sh notify-test
+```
+
+スクリプトには `CP_EVENT`、`CP_MESSAGE`、`CP_HOST` が環境変数として渡されるので、
+Telegram、Slack、webhook、`mail` などへの変更はその `curl` 一本を書き換えるだけです。
+再インストールしても `notify.sh` は残ります。
+
+利用制限そのものは通知しません。あれは日常的なもので自動再開が処理しますし、
+毎回知らせればただの雑音になります。
 
 ## ファイル
 
@@ -73,6 +107,8 @@ tail -f ~/.claude/claude-plus/claude-plus.log # ログ確認
 | `~/.claude/claude-plus/state/pending/` | 制限で停止し再開を待つセッション |
 | `~/.claude/claude-plus/state/stale/` | pane が変化したため破棄された再開待ち記録 |
 | `~/.claude/claude-plus/original-statusline-command` | 既存の statusLine コマンド |
+| `~/.claude/claude-plus/notify.sh` | 設定した通知スクリプト（あれば） |
+| `~/.claude/claude-plus/notify/` | コピー元の通知スクリプト見本 |
 | `~/.claude/claude-plus/claude-plus.log` | ログ |
 
 ## アンインストール

@@ -14,10 +14,11 @@ PENDING="$STATE/pending"
 STALE="$STATE/stale"
 BIN="$BASE/claude-plus.sh"
 ORIG="$BASE/original-statusline-command"
+NOTIFY="$BASE/notify.sh"
 SETTINGS="$HOME/.claude/settings.json"
 MARKER="/claude-plus/claude-plus.sh"
 
-# 必要なコマンドを確認する
+# Check the commands we depend on
 for cmd in claude jq at atq atrm flock date timeout tmux; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "Required command not found: $cmd" >&2
@@ -27,12 +28,12 @@ done
 
 mkdir -p "$HOME/.claude"
 
-# settings.json が存在しない場合は空の JSON を作成する
+# Start from an empty object when there is no settings.json yet
 if [[ ! -f "$SETTINGS" ]]; then
     printf '{}\n' > "$SETTINGS"
 fi
 
-# JSON の妥当性を確認する
+# Refuse to touch a settings.json that is not valid JSON
 jq empty "$SETTINGS"
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
@@ -45,9 +46,21 @@ if [[ -s "$ORIG" ]]; then
     cp -p "$ORIG" "$PRESERVED_ORIG"
 fi
 
+# The notify script carries the user's own credentials, so a reinstall
+# must not throw it away along with the rest of the directory
+PRESERVED_NOTIFY=""
+if [[ -f "$NOTIFY" ]]; then
+    PRESERVED_NOTIFY="$(mktemp)"
+    cp -p "$NOTIFY" "$PRESERVED_NOTIFY"
+fi
+
 cleanup_temp() {
     if [[ -n "$PRESERVED_ORIG" && -f "$PRESERVED_ORIG" ]]; then
         rm -f "$PRESERVED_ORIG"
+    fi
+
+    if [[ -n "$PRESERVED_NOTIFY" && -f "$PRESERVED_NOTIFY" ]]; then
+        rm -f "$PRESERVED_NOTIFY"
     fi
 }
 trap cleanup_temp EXIT
@@ -73,7 +86,7 @@ remove_old_installation() {
 
     echo "Existing installation detected. Removing it first..."
 
-    # 自分が登録した at ジョブだけを削除する
+    # Only remove at jobs this tool registered
     while read -r job_id _; do
         [[ -n "$job_id" ]] || continue
         if at -c "$job_id" 2>/dev/null | grep -Fq "$MARKER"; then
@@ -81,7 +94,7 @@ remove_old_installation() {
         fi
     done < <(atq 2>/dev/null || true)
 
-    # バックアップ全体は復元せず、claude-plus の設定だけを現在の settings.json から削除する
+    # Strip only our own entries rather than restoring the whole backup
     local tmp
     tmp="$(mktemp)"
 
@@ -120,7 +133,7 @@ remove_old_installation() {
     jq empty "$tmp"
     mv "$tmp" "$SETTINGS"
 
-    # 本体・状態ファイルを削除する
+    # Remove the script and its state
     rm -rf "$BASE"
 }
 
@@ -128,13 +141,31 @@ remove_old_installation
 
 mkdir -p "$BASE" "$STATE" "$PENDING" "$STALE"
 
+# Put the user's notify script back after the directory was cleared
+if [[ -n "$PRESERVED_NOTIFY" && -f "$PRESERVED_NOTIFY" ]]; then
+    cp -p "$PRESERVED_NOTIFY" "$NOTIFY"
+fi
+
+# Install the notifier samples when they are reachable from this script.
+# npx puts a symlink in node_modules/.bin, so resolve that first.
+SCRIPT_SRC="${BASH_SOURCE[0]}"
+if [[ -L "$SCRIPT_SRC" ]]; then
+    SCRIPT_SRC="$(readlink -f "$SCRIPT_SRC" 2>/dev/null || readlink "$SCRIPT_SRC")"
+fi
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SRC")" && pwd)"
+
+if compgen -G "$SCRIPT_DIR/notify/*.sample" >/dev/null; then
+    mkdir -p "$BASE/notify"
+    cp -p "$SCRIPT_DIR/notify"/*.sample "$BASE/notify/"
+fi
+
 CURRENT_STATUS_COMMAND="$(jq -r '.statusLine.command // empty' "$SETTINGS")"
 
-# 現在の settings.json に別の statusLine があれば、それを優先して保存する
+# A statusLine already in settings.json wins over anything saved earlier
 if [[ -n "$CURRENT_STATUS_COMMAND" ]]; then
     printf '%s\n' "$CURRENT_STATUS_COMMAND" > "$ORIG"
 elif [[ -n "$PRESERVED_ORIG" && -s "$PRESERVED_ORIG" ]]; then
-    # 旧版が保持していた既存 statusLine は、設定へ直接復元せずラッパー用として引き継ぐ
+    # Carry a saved statusLine over as the wrapped command, not back into settings
     cp -p "$PRESERVED_ORIG" "$ORIG"
 fi
 
@@ -149,13 +180,14 @@ cat > "$BIN" <<'CLAUDE_PLUS'
 # option) any later version. See the LICENSE file for details.
 set -u
 
-VERSION="2.1.2"
+VERSION="2.2.0"
 
 BASE="$HOME/.claude/claude-plus"
 STATE="$BASE/state"
 PENDING="$STATE/pending"
 STALE="$STATE/stale"
 ORIG="$BASE/original-statusline-command"
+NOTIFY="$BASE/notify.sh"
 LOG="$BASE/claude-plus.log"
 SELF="$BASE/claude-plus.sh"
 
@@ -163,6 +195,44 @@ mkdir -p "$STATE" "$PENDING" "$STALE"
 
 log() {
     printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG"
+}
+
+# Hand the event to whatever notifier the user installed. A broken or slow
+# notifier must never take the run down with it.
+notify() {
+    [[ -x "$NOTIFY" ]] || return 0
+
+    CP_EVENT="$1" CP_MESSAGE="$2" CP_HOST="$(uname -n)" \
+        timeout 20 "$NOTIFY" >/dev/null 2>&1 ||
+        log "Notify script failed event=$1"
+}
+
+# Notify on the way into a state, not on every retry inside it
+notify_once() {
+    local flag="$STATE/notified-$1"
+
+    [[ -e "$flag" ]] && return 0
+    : > "$flag"
+
+    notify "$2" "$3"
+}
+
+# Announce the recovery only to those who heard about the problem
+notify_recovered() {
+    local key flag cleared=0
+
+    for key in auth failing; do
+        flag="$STATE/notified-$key"
+
+        if [[ -e "$flag" ]]; then
+            rm -f "$flag"
+            cleared=1
+        fi
+    done
+
+    if (( cleared == 1 )); then
+        notify "recovered" "Claude Plus is back to normal; warmups are succeeding again."
+    fi
 }
 
 job_exists() {
@@ -187,17 +257,17 @@ arm_job() {
     old_job="$(cat "$STATE/at_job" 2>/dev/null || true)"
     old_target="$(cat "$STATE/at_target" 2>/dev/null || true)"
 
-    # 過去時刻を指定された場合は数秒後に補正する
+    # A target in the past would never fire; push it a few seconds out
     if (( target <= now )); then
         target=$((now + 5))
     fi
 
-    # 同じ実行時刻の有効なジョブが既に存在する場合は再登録しない
+    # Same target and the job is still queued: nothing to do
     if [[ "$target" == "$old_target" ]] && job_exists "$old_job"; then
         return 0
     fi
 
-    # 以前の claude-plus ジョブを削除する
+    # Drop the job scheduled last time
     if job_exists "$old_job"; then
         atrm "$old_job" >/dev/null 2>&1 || true
     fi
@@ -280,7 +350,7 @@ observe() {
             printf '%s\n' "$five_pct" > "$STATE/five_hour_pct"
         fi
 
-        # 公式 reset 時刻を最優先し、15秒の安全余裕を付ける
+        # Trust the official reset time, plus 15s of slack
         arm_job "$((five_reset + 15))" "official-five-hour-reset"
     fi
 }
@@ -289,10 +359,10 @@ statusline() {
     local input
     input="$(cat)"
 
-    # reset 情報を内部状態へ反映する
+    # Feed the reset times into our own state
     printf '%s' "$input" | "$SELF" observe >/dev/null 2>&1 || true
 
-    # 既存 statusLine がある場合は表示をそのまま維持する
+    # With a wrapped command, render exactly what it renders
     if [[ -s "$ORIG" ]]; then
         local original
         original="$(cat "$ORIG")"
@@ -300,7 +370,7 @@ statusline() {
         return
     fi
 
-    # 既存 statusLine がない場合だけ最小表示を行う
+    # Only fall back to a minimal line when nothing is wrapped
     local pct reset
     pct="$(
         printf '%s' "$input" |
@@ -348,7 +418,7 @@ rate_limit() {
         return 0
     fi
 
-    # tmux 外のセッションは自動キー送信できないため記録だけ残す
+    # Outside tmux there is no pane to type into, so only record it
     if [[ -z "${TMUX:-}" || -z "${TMUX_PANE:-}" ]]; then
         log "Rate limit detected session=$session_id but session is not running in tmux"
         return 0
@@ -409,7 +479,7 @@ rate_limit() {
 
     log "Rate limit detected session=$session_id tmux=$tmux_session pane=$pane command=$pane_command"
 
-    # 週次制限なら週次 reset を優先する
+    # A weekly limit outranks the five-hour one
     if [[ "$seven_reset" =~ ^[0-9]+$ ]] &&
        [[ -n "$seven_pct" ]] &&
        awk -v p="$seven_pct" 'BEGIN { exit !(p >= 99.9) }' &&
@@ -418,11 +488,11 @@ rate_limit() {
         return 0
     fi
 
-    # 5時間 reset が既知ならその時刻に自動復帰を予約する
+    # Schedule the resume for the known reset time
     if [[ "$five_reset" =~ ^[0-9]+$ ]] && (( five_reset > now )); then
         arm_job "$((five_reset + 15))" "pending-rate-limit"
     else
-        # reset が取得できていない場合でもチェーンを止めない
+        # Without a known reset, retry soon rather than breaking the chain
         arm_job "$((now + 60))" "pending-reset-unknown"
     fi
 }
@@ -477,7 +547,7 @@ resume_pending() {
 
         [[ "$attempts" =~ ^[0-9]+$ ]] || attempts=0
 
-        # 自動送信は最大2回までに制限する
+        # Give up after two unanswered attempts
         if (( attempts >= 2 )); then
             continue
         fi
@@ -507,7 +577,7 @@ resume_pending() {
                 true
         )"
 
-        # Claude を終了して shell に戻った pane への誤送信を防止する
+        # The pane may have gone back to a shell; never type into that
         if [[ -n "$expected_command" &&
               -n "$current_command" &&
               "$current_command" != "$expected_command" ]]; then
@@ -515,7 +585,7 @@ resume_pending() {
             continue
         fi
 
-        # UserPromptSubmit と競合しないよう、送信前に試行回数を更新する
+        # Count the attempt before sending, so UserPromptSubmit cannot race us
         tmp="$file.tmp.$$"
         jq \
             --argjson attempts "$((attempts + 1))" \
@@ -532,7 +602,7 @@ resume_pending() {
             log "Failed to send continue session=$session_id tmux=$expected_session pane=$pane"
         fi
 
-        # 複数セッションへ同時に大量送信しない
+        # Spread sends out across sessions
         sleep 1
     done
 
@@ -544,7 +614,7 @@ resume_pending() {
 do_warmup() {
     exec 8>"$STATE/warmup.lock"
 
-    # 同時 warm-up を防止する
+    # Never let two warmups run at once
     if ! flock -n 8; then
         return 0
     fi
@@ -582,10 +652,11 @@ do_warmup() {
         printf '%s\n' "$started" > "$STATE/last_success"
         printf '0\n' > "$STATE/failure_count"
         rm -f "$STATE/auth_required"
+        notify_recovered
 
         log "Warmup succeeded output=$(printf '%s' "$output" | tr '\n' ' ' | cut -c1-200)"
 
-        # safe-mode では statusLine が動かないため、成功時刻を基準に次回を推定する
+        # safe-mode runs no statusLine, so estimate the next window from this request
         arm_job "$((started + 5 * 3600 + 15))" "estimated-next-reset"
         return 0
     fi
@@ -595,7 +666,10 @@ do_warmup() {
         printf '%s\n' "$(date +%s)" > "$STATE/auth_required"
         log "Authentication required; automatic warmup paused output=$(printf '%s' "$output" | tr '\n' ' ' | cut -c1-300)"
 
-        # 一時的な認証障害から自動回復できる可能性を残す
+        notify_once auth "auth-required" \
+            "Claude Code is no longer authenticated, so Claude Plus has stopped opening windows. Sign in again with: claude /login"
+
+        # Leave room to recover on its own if the failure was temporary
         arm_job "$((now + 3600))" "auth-recheck"
         return 1
     fi
@@ -615,6 +689,13 @@ do_warmup() {
     esac
 
     log "Warmup failed rc=$rc retry=${delay}s output=$(printf '%s' "$output" | tr '\n' ' ' | cut -c1-300)"
+
+    # Three failures means the backoff has stretched to minutes; worth a word
+    if (( failures >= 3 )); then
+        notify_once failing "warmup-failing" \
+            "Claude Plus has failed $failures warmups in a row and is retrying every ${delay}s. See ~/.claude/claude-plus/claude-plus.log"
+    fi
+
     arm_job "$((now + delay))" "warmup-retry"
     return 1
 }
@@ -630,16 +711,16 @@ scheduled() {
         return 0
     fi
 
-    # rate limit で停止した実作業を warm-up より優先する
+    # Real work that stopped on a limit comes before any warmup
     sent="$(resume_pending)"
 
     if [[ "$sent" =~ ^[0-9]+$ ]] && (( sent > 0 )); then
-        # UserPromptSubmit と新しい statusLine 更新を待つ
+        # Give UserPromptSubmit and the next statusLine refresh time to land
         arm_job "$((now + 90))" "resume-verification"
         return 0
     fi
 
-    # 復帰対象がない、または自動復帰を2回試しても反応がない場合のフォールバック
+    # Nothing to resume, or two attempts went unanswered
     do_warmup || true
 }
 
@@ -680,11 +761,35 @@ show_status() {
     echo "Failures        : $failures"
     echo "Auth status     : $auth_status"
 
+    if [[ -x "$NOTIFY" ]]; then
+        echo "Notify          : $NOTIFY"
+    else
+        echo "Notify          : not configured"
+    fi
+
     if [[ "$last_success" =~ ^[0-9]+$ ]]; then
         echo "Last warmup     : $(date -d "@$last_success" '+%Y-%m-%d %H:%M:%S')"
     else
         echo "Last warmup     : none"
     fi
+}
+
+notify_test() {
+    if [[ ! -x "$NOTIFY" ]]; then
+        echo "No executable notify script at $NOTIFY" >&2
+        echo "Copy one of $BASE/notify/*.sample there and edit it." >&2
+        return 1
+    fi
+
+    # Run it in the open so the user sees why it failed
+    CP_EVENT="test" \
+    CP_MESSAGE="Test notification from Claude Plus." \
+    CP_HOST="$(uname -n)" \
+        "$NOTIFY"
+
+    local rc=$?
+    echo "Notify script exited with $rc"
+    return "$rc"
 }
 
 show_pending() {
@@ -742,11 +847,14 @@ case "${1:-}" in
     pending)
         show_pending
         ;;
+    notify-test)
+        notify_test
+        ;;
     version)
         echo "$VERSION"
         ;;
     *)
-        echo "Usage: $0 {statusline|observe|rate-limit|prompt-submit|session-end|warmup|scheduled|status|pending|version}" >&2
+        echo "Usage: $0 {statusline|observe|rate-limit|prompt-submit|session-end|warmup|scheduled|status|pending|notify-test|version}" >&2
         exit 2
         ;;
 esac
@@ -754,7 +862,7 @@ CLAUDE_PLUS
 
 chmod +x "$BIN"
 
-# 生成した本体スクリプトの構文を確認する
+# Make sure the script just generated parses
 bash -n "$BIN"
 
 TMP_SETTINGS="$(mktemp)"
@@ -842,5 +950,5 @@ echo "Check:"
 echo "  $BIN status"
 echo "  $BIN pending"
 echo
-echo "Claude Code 内では /hooks で StopFailure(rate_limit), UserPromptSubmit, SessionEnd を確認してください。"
+echo "Inside Claude Code, check /hooks for StopFailure(rate_limit), UserPromptSubmit and SessionEnd."
 

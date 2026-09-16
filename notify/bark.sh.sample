@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Bark (iOS) notifier for Claude Plus.
+#
+# Install it, then put your own device key below:
+#
+#   cp ~/.claude/claude-plus/notify/bark.sh.sample ~/.claude/claude-plus/notify.sh
+#   chmod +x ~/.claude/claude-plus/notify.sh
+#   ~/.claude/claude-plus/claude-plus.sh notify-test
+#
+# Claude Plus runs this script with CP_EVENT, CP_MESSAGE and CP_HOST set.
+
+set -u
+
+BARK_KEY="your-device-key"
+BARK_SERVER="https://api.day.app"
+
+curl -fsS -o /dev/null \
+    --max-time 15 \
+    --data-urlencode "title=Claude Plus on $CP_HOST" \
+    --data-urlencode "body=$CP_MESSAGE" \
+    --data-urlencode "group=claude-plus" \
+    "$BARK_SERVER/$BARK_KEY"

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# ntfy notifier for Claude Plus. Works on Android, iOS and the desktop.
+#
+# Install it, then pick your own topic below. A topic is a shared secret:
+# anyone who knows it can read your notifications, so make it hard to guess.
+#
+#   cp ~/.claude/claude-plus/notify/ntfy.sh.sample ~/.claude/claude-plus/notify.sh
+#   chmod +x ~/.claude/claude-plus/notify.sh
+#   ~/.claude/claude-plus/claude-plus.sh notify-test
+#
+# Claude Plus runs this script with CP_EVENT, CP_MESSAGE and CP_HOST set.
+
+set -u
+
+NTFY_TOPIC="your-topic"
+NTFY_SERVER="https://ntfy.sh"
+
+curl -fsS -o /dev/null \
+    --max-time 15 \
+    -H "Title: Claude Plus on $CP_HOST" \
+    -H "Tags: robot" \
+    -d "$CP_MESSAGE" \
+    "$NTFY_SERVER/$NTFY_TOPIC"
