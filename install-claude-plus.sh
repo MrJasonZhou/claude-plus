@@ -17,10 +17,6 @@ ORIG="$BASE/original-statusline-command"
 SETTINGS="$HOME/.claude/settings.json"
 MARKER="/claude-plus/claude-plus.sh"
 
-# v2.0.0 までは claude-window-keeper という名前だった
-LEGACY_BASE="$HOME/.claude/window-keeper"
-LEGACY_MARKER="/window-keeper/window-keeper.sh"
-
 # 必要なコマンドを確認する
 for cmd in claude jq at atq atrm flock date timeout tmux; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -43,15 +39,11 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 SETTINGS_BACKUP="$SETTINGS.claude-plus-install-backup.$STAMP"
 cp -p "$SETTINGS" "$SETTINGS_BACKUP"
 
-# 旧名称の設置からも既存 statusLine を引き継ぐ
 PRESERVED_ORIG=""
-for candidate in "$ORIG" "$LEGACY_BASE/original-statusline-command"; do
-    if [[ -s "$candidate" ]]; then
-        PRESERVED_ORIG="$(mktemp)"
-        cp -p "$candidate" "$PRESERVED_ORIG"
-        break
-    fi
-done
+if [[ -s "$ORIG" ]]; then
+    PRESERVED_ORIG="$(mktemp)"
+    cp -p "$ORIG" "$PRESERVED_ORIG"
+fi
 
 cleanup_temp() {
     if [[ -n "$PRESERVED_ORIG" && -f "$PRESERVED_ORIG" ]]; then
@@ -63,15 +55,14 @@ trap cleanup_temp EXIT
 remove_old_installation() {
     local found=0
 
-    if [[ -e "$BASE" || -e "$LEGACY_BASE" ]]; then
+    if [[ -e "$BASE" ]]; then
         found=1
     fi
 
-    if jq -e --arg marker "$MARKER" --arg legacy "$LEGACY_MARKER" '
-        def tagged: . as $s | ($s | contains($marker)) or ($s | contains($legacy));
-        ((.statusLine.command? // "") | tagged)
+    if jq -e --arg marker "$MARKER" '
+        ((.statusLine.command? // "") | contains($marker))
         or
-        ([.hooks? // {} | to_entries[]? | .value[]? | .hooks[]? | (.command? // "") | tagged] | any)
+        ([.hooks? // {} | to_entries[]? | .value[]? | .hooks[]? | (.command? // "") | contains($marker)] | any)
     ' "$SETTINGS" >/dev/null 2>&1; then
         found=1
     fi
@@ -85,7 +76,7 @@ remove_old_installation() {
     # 自分が登録した at ジョブだけを削除する
     while read -r job_id _; do
         [[ -n "$job_id" ]] || continue
-        if at -c "$job_id" 2>/dev/null | grep -Fq -e "$MARKER" -e "$LEGACY_MARKER"; then
+        if at -c "$job_id" 2>/dev/null | grep -Fq "$MARKER"; then
             atrm "$job_id" >/dev/null 2>&1 || true
         fi
     done < <(atq 2>/dev/null || true)
@@ -94,9 +85,7 @@ remove_old_installation() {
     local tmp
     tmp="$(mktemp)"
 
-    jq --arg marker "$MARKER" --arg legacy "$LEGACY_MARKER" '
-        def tagged: . as $s | ($s | contains($marker)) or ($s | contains($legacy));
-
+    jq --arg marker "$MARKER" '
         def clean_hook_groups:
             if type != "array" then .
             else
@@ -105,7 +94,7 @@ remove_old_installation() {
                         (.hooks // [])
                         | map(
                             select(
-                                (((.command // "") | tagged) | not)
+                                (((.command // "") | contains($marker)) | not)
                             )
                         )
                     )
@@ -113,7 +102,7 @@ remove_old_installation() {
                 | map(select(((.hooks // []) | length) > 0))
             end;
 
-        if ((.statusLine.command? // "") | tagged) then
+        if ((.statusLine.command? // "") | contains($marker)) then
             del(.statusLine)
         else
             .
@@ -131,8 +120,8 @@ remove_old_installation() {
     jq empty "$tmp"
     mv "$tmp" "$SETTINGS"
 
-    # 本体・状態ファイルを削除する（旧名称のディレクトリも含む）
-    rm -rf "$BASE" "$LEGACY_BASE"
+    # 本体・状態ファイルを削除する
+    rm -rf "$BASE"
 }
 
 remove_old_installation
@@ -772,19 +761,16 @@ TMP_SETTINGS="$(mktemp)"
 
 jq \
     --arg marker "$MARKER" \
-    --arg legacy "$LEGACY_MARKER" \
     --arg status_cmd "$BIN statusline" \
     --arg rate_cmd "$BIN rate-limit" \
     --arg prompt_cmd "$BIN prompt-submit" \
     --arg end_cmd "$BIN session-end" \
     '
-    def tagged: . as $s | ($s | contains($marker)) or ($s | contains($legacy));
-
     def clean_wk:
         map(
             .hooks = (
                 (.hooks // [])
-                | map(select(((.command // "") | tagged) | not))
+                | map(select(((.command // "") | contains($marker)) | not))
             )
         )
         | map(select((.hooks | length) > 0));
