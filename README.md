@@ -7,6 +7,12 @@ Enhancements for Claude Code, driven by `at` jobs:
 - **Resume** — when a session dies on a rate limit inside tmux, it types `continue` back into that pane as soon as the limit resets.
 - **Keep** — with nothing to resume, it opens a fresh 5-hour window with a tiny Haiku request.
 
+## Why it helps
+
+**Recovering from a 5-hour limit.** Hitting the cap normally means the session just stops, and you come back later to restart it by hand. Here `continue` is typed into the pane the moment the limit resets, so the work picks up where it left off — including while you are asleep or away from the desk.
+
+**When the window opens decides when it ends.** A 5-hour window starts at your first request, not at a fixed hour. Begin work at 9:00 and the window runs 9:00-14:00; burn through the quota by 11:00 and you are locked out until 14:00. Had a tiny request opened the window at 6:00 instead, it would expire at 11:00 — exactly when you run dry — with a fresh quota already waiting. Keeping a window always running pushes its reset ahead of your working hours instead of into the middle of them.
+
 ## How it works
 
 1. Install rewrites `~/.claude/settings.json`: `statusLine` plus three hooks — `StopFailure` (matcher `rate_limit`), `UserPromptSubmit`, `SessionEnd`. Your existing status line command is saved and still rendered.
