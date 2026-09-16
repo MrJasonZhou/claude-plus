@@ -1,9 +1,9 @@
 {
-  "name": "claudeplus",
+  "name": "@mrjasonzhou/claude-plus",
   "version": "2.1.0",
   "description": "Enhancements for Claude Code: resumes rate-limited tmux sessions and keeps the 5-hour window warm",
   "bin": {
-    "claudeplus": "install-claude-plus.sh"
+    "claude-plus": "install-claude-plus.sh"
   },
   "files": [
     "install-claude-plus.sh",
@@ -32,5 +32,8 @@
   "os": [
     "linux",
     "darwin"
-  ]
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }
