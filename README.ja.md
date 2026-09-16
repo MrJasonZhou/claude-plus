@@ -72,3 +72,7 @@ atrm "$(cat ~/.claude/claude-plus/state/at_job)"
 cp ~/.claude/settings.json.claude-plus-install-backup.<タイムスタンプ> ~/.claude/settings.json
 rm -rf ~/.claude/claude-plus
 ```
+
+## ライセンス
+
+GPL-3.0-or-later。詳細は [LICENSE](LICENSE) を参照してください。

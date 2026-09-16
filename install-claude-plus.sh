@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# Claude Plus - enhancements for Claude Code
+# Copyright (C) 2026 MrJasonZhou
+#
+# This program is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation, either version 3 of the License, or (at your
+# option) any later version. See the LICENSE file for details.
 set -euo pipefail
 
 BASE="$HOME/.claude/claude-plus"
@@ -144,6 +151,13 @@ fi
 
 cat > "$BIN" <<'CLAUDE_PLUS'
 #!/usr/bin/env bash
+# Claude Plus - enhancements for Claude Code
+# Copyright (C) 2026 MrJasonZhou
+#
+# This program is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation, either version 3 of the License, or (at your
+# option) any later version. See the LICENSE file for details.
 set -u
 
 VERSION="2.1.0"
