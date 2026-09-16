@@ -180,7 +180,7 @@ cat > "$BIN" <<'CLAUDE_PLUS'
 # option) any later version. See the LICENSE file for details.
 set -u
 
-VERSION="2.2.0"
+VERSION="2.2.1"
 
 BASE="$HOME/.claude/claude-plus"
 STATE="$BASE/state"
