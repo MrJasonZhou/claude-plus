@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Claude Plus - enhancements for Claude Code
-# Copyright (C) 2026 MrJasonZhou
+# Copyright (C) 2026 Jason Zhou
 #
 # This program is free software: you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by the
@@ -152,7 +152,7 @@ fi
 cat > "$BIN" <<'CLAUDE_PLUS'
 #!/usr/bin/env bash
 # Claude Plus - enhancements for Claude Code
-# Copyright (C) 2026 MrJasonZhou
+# Copyright (C) 2026 Jason Zhou
 #
 # This program is free software: you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by the
