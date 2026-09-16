@@ -52,8 +52,6 @@ cd claude-plus
 bash install-claude-plus.sh
 ```
 
-本项目原名 `claude-window-keeper`。从旧版升级无需额外操作：安装脚本会识别旧名称，移除它的 `at` 任务、设置条目和 `~/.claude/window-keeper/`，并继承你保存的 status line 命令。
-
 安装前会先移除旧版本 —— 它的 `at` 任务、`statusLine` 与 hook 条目，以及 `~/.claude/claude-plus/` —— 所以重复执行安装脚本就是一次干净的升级。其他人的 hook 不受影响。`settings.json` 会备份为 `settings.json.claude-plus-install-backup.<时间戳>`。
 
 安装后请在 Claude Code 内用 `/hooks` 确认 `StopFailure`、`UserPromptSubmit`、`SessionEnd`。

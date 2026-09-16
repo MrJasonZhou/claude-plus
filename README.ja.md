@@ -52,8 +52,6 @@ cd claude-plus
 bash install-claude-plus.sh
 ```
 
-本プロジェクトの旧名称は `claude-window-keeper` です。旧版からの更新に追加手順は要りません。インストーラが旧名称を検出し、その `at` ジョブ、設定項目、`~/.claude/window-keeper/` を削除したうえで、保存済みの statusLine コマンドを引き継ぎます。
-
 旧バージョンがあれば先に削除します —— その `at` ジョブ、`statusLine` とフックの項目、`~/.claude/claude-plus/` —— のため、インストーラの再実行がそのままクリーンな更新になります。他のフックには手を触れません。`settings.json` は `settings.json.claude-plus-install-backup.<タイムスタンプ>` としてバックアップされます。
 
 インストール後、Claude Code 内の `/hooks` で `StopFailure`、`UserPromptSubmit`、`SessionEnd` を確認してください。

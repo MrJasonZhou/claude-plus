@@ -52,8 +52,6 @@ cd claude-plus
 bash install-claude-plus.sh
 ```
 
-Formerly `claude-window-keeper`. Upgrading from it needs no extra step: the installer detects the old name, removes its `at` jobs, settings entries and `~/.claude/window-keeper/`, and carries your saved status line command over.
-
 Any previous installation is removed first — its `at` jobs, its `statusLine` and hook entries, and `~/.claude/claude-plus/` — so re-running the installer is a clean upgrade. Other people's hooks are left alone. `settings.json` is backed up as `settings.json.claude-plus-install-backup.<timestamp>`.
 
 Afterwards, check `/hooks` inside Claude Code for `StopFailure`, `UserPromptSubmit` and `SessionEnd`.
