@@ -41,6 +41,12 @@ sudo systemctl enable --now atd
 ## 安装
 
 ```bash
+npx @mrjasonzhou/claude-plus
+```
+
+或者从源码安装：
+
+```bash
 git clone https://github.com/MrJasonZhou/claude-plus.git
 cd claude-plus
 bash install-claude-plus.sh
