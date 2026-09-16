@@ -1,0 +1,36 @@
+{
+  "name": "claudeplus",
+  "version": "2.1.0",
+  "description": "Enhancements for Claude Code: resumes rate-limited tmux sessions and keeps the 5-hour window warm",
+  "bin": {
+    "claudeplus": "install-claude-plus.sh"
+  },
+  "files": [
+    "install-claude-plus.sh",
+    "README.md",
+    "README.zh-CN.md",
+    "README.ja.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "tmux",
+    "rate-limit",
+    "statusline"
+  ],
+  "homepage": "https://github.com/MrJasonZhou/claude-plus#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MrJasonZhou/claude-plus.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MrJasonZhou/claude-plus/issues"
+  },
+  "author": "Jason Zhou",
+  "license": "GPL-3.0-or-later",
+  "os": [
+    "linux",
+    "darwin"
+  ]
+}
