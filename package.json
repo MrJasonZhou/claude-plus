@@ -1,7 +1,7 @@
 {
   "name": "@claude-plus/claude-plus",
-  "version": "2.4.0",
-  "description": "Enhancements for Claude Code: resumes rate-limited tmux sessions and keeps the 5-hour window warm",
+  "version": "3.0.0",
+  "description": "Enhancements for Claude Code: keeps the 5-hour usage window open while you are away, and alerts you when it cannot",
   "bin": {
     "claude-plus": "install-claude-plus.sh"
   },
@@ -14,9 +14,9 @@
   "keywords": [
     "claude",
     "claude-code",
-    "tmux",
     "rate-limit",
-    "statusline"
+    "statusline",
+    "usage-limit"
   ],
   "homepage": "https://github.com/MrJasonZhou/claude-plus#readme",
   "repository": {

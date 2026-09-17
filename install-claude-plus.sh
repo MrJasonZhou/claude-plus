@@ -10,8 +10,6 @@ set -euo pipefail
 
 BASE="$HOME/.claude/claude-plus"
 STATE="$BASE/state"
-PENDING="$STATE/pending"
-STALE="$STATE/stale"
 BIN="$BASE/claude-plus.sh"
 ORIG="$BASE/original-statusline-command"
 NOTIFY="$BASE/notify.sh"
@@ -344,7 +342,7 @@ if [[ "$ACTION" == "uninstall" ]]; then
     exit 0
 fi
 
-require claude at atq atrm flock date timeout tmux
+require claude at atq atrm flock date timeout
 
 mkdir -p "$HOME/.claude"
 
@@ -368,15 +366,19 @@ if is_installed; then
 fi
 
 # Upgrade clears settings and at jobs exactly as uninstall does, but keeps
-# what is still running: sessions waiting to resume, reset times, failure and
-# notification state, and the user's notifier (it holds their credentials)
-KEEP=("$(basename "$STATE")" "$(basename "$NOTIFY")")
+# what is still running (reset times, failure and notification state), the
+# user's notifier (it holds their credentials) and the log
+KEEP=("$(basename "$STATE")" "$(basename "$NOTIFY")" "claude-plus.log")
 if (( KEEP_CHAIN )); then
     KEEP+=("$(basename "$ORIG")")
 fi
 remove_installation "${KEEP[@]}"
 
-mkdir -p "$BASE" "$STATE" "$PENDING" "$STALE"
+# Versions before 3.0.0 resumed rate-limited sessions themselves. Claude Code
+# now does that on its own, so their queue of sessions has no reader.
+rm -rf "$STATE/pending" "$STATE/stale"
+
+mkdir -p "$BASE" "$STATE"
 
 # Install the notifier samples when they are reachable from this script.
 # npx puts a symlink in node_modules/.bin, so resolve that first.
@@ -413,18 +415,16 @@ cat > "$BIN" <<'CLAUDE_PLUS'
 # option) any later version. See the LICENSE file for details.
 set -u
 
-VERSION="2.4.0"
+VERSION="3.0.0"
 
 BASE="$HOME/.claude/claude-plus"
 STATE="$BASE/state"
-PENDING="$STATE/pending"
-STALE="$STATE/stale"
 ORIG="$BASE/original-statusline-command"
 NOTIFY="$BASE/notify.sh"
 LOG="$BASE/claude-plus.log"
 SELF="$BASE/claude-plus.sh"
 
-mkdir -p "$STATE" "$PENDING" "$STALE"
+mkdir -p "$STATE"
 
 log() {
     printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG"
@@ -706,293 +706,6 @@ statusline() {
     fi
 }
 
-# When a process started, in clock ticks since boot. Together with the pid it
-# names one process, even once the pid has been reused.
-process_start() {
-    local stat
-
-    [[ "${1:-}" =~ ^[0-9]+$ ]] || return 0
-    stat="$(cat "/proc/$1/stat" 2>/dev/null)" || return 0
-
-    # Field 22. The command name in field 2 may hold spaces, so cut past ") "
-    stat="${stat##*) }"
-    awk '{print $20}' <<< "$stat"
-}
-
-# The foreground process group of the terminal a pane's first process sits
-# on: in practice the claude the user is running in that pane.
-foreground_pgid() {
-    [[ "${1:-}" =~ ^[0-9]+$ ]] || return 0
-    ps -o tpgid= -p "$1" 2>/dev/null | tr -d ' '
-}
-
-pending_path() {
-    local session_id="$1"
-    local safe
-    safe="$(printf '%s' "$session_id" | tr -c 'A-Za-z0-9._-' '_')"
-    printf '%s/%s.json\n' "$PENDING" "$safe"
-}
-
-remove_pending() {
-    local session_id="$1"
-    local file
-    [[ -n "$session_id" ]] || return 0
-    file="$(pending_path "$session_id")"
-    rm -f "$file"
-}
-
-rate_limit() {
-    local input
-    input="$(cat)"
-
-    local session_id cwd transcript now
-    session_id="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)"
-    cwd="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)"
-    transcript="$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)"
-    now="$(date +%s)"
-
-    if [[ -z "$session_id" ]]; then
-        log "StopFailure(rate_limit) received without session_id"
-        return 0
-    fi
-
-    # Outside tmux there is no pane to type into, so only record it
-    if [[ -z "${TMUX:-}" || -z "${TMUX_PANE:-}" ]]; then
-        log "Rate limit detected session=$session_id but session is not running in tmux"
-        return 0
-    fi
-
-    local socket pane tmux_session window_index pane_index pane_command pane_pid
-    socket="${TMUX%%,*}"
-    pane="$TMUX_PANE"
-
-    tmux_session="$(tmux -S "$socket" display-message -p -t "$pane" '#S' 2>/dev/null || true)"
-    window_index="$(tmux -S "$socket" display-message -p -t "$pane" '#I' 2>/dev/null || true)"
-    pane_index="$(tmux -S "$socket" display-message -p -t "$pane" '#P' 2>/dev/null || true)"
-    pane_command="$(tmux -S "$socket" display-message -p -t "$pane" '#{pane_current_command}' 2>/dev/null || true)"
-    pane_pid="$(tmux -S "$socket" display-message -p -t "$pane" '#{pane_pid}' 2>/dev/null || true)"
-
-    if [[ -z "$tmux_session" ]]; then
-        log "Rate limit detected session=$session_id but tmux pane could not be resolved"
-        return 0
-    fi
-
-    local fg_pgid fg_start
-    fg_pgid="$(foreground_pgid "$pane_pid")"
-    fg_start="$(process_start "$fg_pgid")"
-
-    local five_reset seven_reset seven_pct file tmp
-    five_reset="$(cat "$STATE/five_hour_reset" 2>/dev/null || true)"
-    seven_reset="$(cat "$STATE/seven_day_reset" 2>/dev/null || true)"
-    seven_pct="$(cat "$STATE/seven_day_pct" 2>/dev/null || true)"
-    file="$(pending_path "$session_id")"
-    tmp="$file.tmp.$$"
-
-    jq -n \
-        --arg session_id "$session_id" \
-        --arg cwd "$cwd" \
-        --arg transcript_path "$transcript" \
-        --arg socket "$socket" \
-        --arg pane "$pane" \
-        --arg tmux_session "$tmux_session" \
-        --arg window_index "$window_index" \
-        --arg pane_index "$pane_index" \
-        --arg pane_command "$pane_command" \
-        --arg pane_pid "$pane_pid" \
-        --arg fg_pgid "$fg_pgid" \
-        --arg fg_start "$fg_start" \
-        --arg five_reset "$five_reset" \
-        --argjson hit_at "$now" \
-        '{
-            session_id: $session_id,
-            cwd: $cwd,
-            transcript_path: $transcript_path,
-            tmux_socket: $socket,
-            tmux_pane: $pane,
-            tmux_session: $tmux_session,
-            window_index: $window_index,
-            pane_index: $pane_index,
-            pane_command: $pane_command,
-            pane_pid: $pane_pid,
-            fg_pgid: $fg_pgid,
-            fg_start: $fg_start,
-            five_hour_reset: $five_reset,
-            hit_at: $hit_at,
-            resume_attempts: 0
-        }' > "$tmp"
-
-    mv "$tmp" "$file"
-
-    log "Rate limit detected session=$session_id tmux=$tmux_session pane=$pane command=$pane_command"
-
-    # A weekly limit outranks the five-hour one
-    if [[ "$seven_reset" =~ ^[0-9]+$ ]] &&
-       [[ -n "$seven_pct" ]] &&
-       awk -v p="$seven_pct" 'BEGIN { exit !(p >= 99.9) }' &&
-       (( seven_reset > now )); then
-        arm_job "$((seven_reset + 15))" "seven-day-reset"
-        return 0
-    fi
-
-    # Schedule the resume for the known reset time
-    if [[ "$five_reset" =~ ^[0-9]+$ ]] && (( five_reset > now )); then
-        arm_job "$((five_reset + 15))" "pending-rate-limit"
-    else
-        # Without a known reset, retry soon rather than breaking the chain
-        arm_job "$((now + 60))" "pending-reset-unknown"
-    fi
-}
-
-prompt_submit() {
-    local input session_id
-    input="$(cat)"
-    session_id="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)"
-
-    if [[ -n "$session_id" ]]; then
-        remove_pending "$session_id"
-        log "Pending state cleared by UserPromptSubmit session=$session_id"
-    fi
-}
-
-session_end() {
-    local input session_id
-    input="$(cat)"
-    session_id="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)"
-
-    if [[ -n "$session_id" ]]; then
-        remove_pending "$session_id"
-        log "Pending state cleared by SessionEnd session=$session_id"
-    fi
-}
-
-archive_stale() {
-    local file="$1"
-    local reason="$2"
-    local dest
-    dest="$STALE/$(basename "$file").$(date +%s)"
-    mv "$file" "$dest" 2>/dev/null || true
-    log "Pending session archived as stale file=$(basename "$file") reason=$reason"
-}
-
-resume_pending() {
-    local sent=0
-    local file
-
-    shopt -s nullglob
-
-    for file in "$PENDING"/*.json; do
-        local session_id socket pane expected_session expected_command attempts
-        local expected_pid expected_fg expected_fg_start
-        local current_session current_command current_pid current_fg tmp
-
-        session_id="$(jq -r '.session_id // empty' "$file" 2>/dev/null)"
-        socket="$(jq -r '.tmux_socket // empty' "$file" 2>/dev/null)"
-        pane="$(jq -r '.tmux_pane // empty' "$file" 2>/dev/null)"
-        expected_session="$(jq -r '.tmux_session // empty' "$file" 2>/dev/null)"
-        expected_command="$(jq -r '.pane_command // empty' "$file" 2>/dev/null)"
-        attempts="$(jq -r '.resume_attempts // 0' "$file" 2>/dev/null)"
-        expected_pid="$(jq -r '.pane_pid // empty' "$file" 2>/dev/null)"
-        expected_fg="$(jq -r '.fg_pgid // empty' "$file" 2>/dev/null)"
-        expected_fg_start="$(jq -r '.fg_start // empty' "$file" 2>/dev/null)"
-
-        [[ "$attempts" =~ ^[0-9]+$ ]] || attempts=0
-
-        # Two unanswered attempts: stop trying, and stop listing it as pending
-        if (( attempts >= 2 )); then
-            archive_stale "$file" "resume-attempts-exhausted"
-            continue
-        fi
-
-        if [[ -z "$session_id" || -z "$socket" || -z "$pane" ]]; then
-            archive_stale "$file" "missing-tmux-metadata"
-            continue
-        fi
-
-        current_session="$(
-            tmux -S "$socket" display-message -p -t "$pane" '#S' 2>/dev/null ||
-                true
-        )"
-
-        if [[ -z "$current_session" ]]; then
-            archive_stale "$file" "tmux-pane-not-found"
-            continue
-        fi
-
-        if [[ "$current_session" != "$expected_session" ]]; then
-            archive_stale "$file" "tmux-session-changed"
-            continue
-        fi
-
-        current_command="$(
-            tmux -S "$socket" display-message -p -t "$pane" '#{pane_current_command}' 2>/dev/null ||
-                true
-        )"
-
-        # The pane may have gone back to a shell; never type into that
-        if [[ -n "$expected_command" &&
-              -n "$current_command" &&
-              "$current_command" != "$expected_command" ]]; then
-            archive_stale "$file" "pane-command-changed:$expected_command->$current_command"
-            continue
-        fi
-
-        # Same name and same command is not proof enough. A restarted tmux
-        # server hands out the same pane ids again, which a changed pane_pid
-        # gives away. A new claude started from the same shell keeps the
-        # shell's pid, but not the foreground process and its start time.
-        # Entries written before these fields existed skip the checks.
-        current_pid="$(
-            tmux -S "$socket" display-message -p -t "$pane" '#{pane_pid}' 2>/dev/null ||
-                true
-        )"
-
-        if [[ -n "$expected_pid" && "$current_pid" != "$expected_pid" ]]; then
-            archive_stale "$file" "pane-process-changed:$expected_pid->$current_pid"
-            continue
-        fi
-
-        if [[ -n "$expected_fg" ]]; then
-            current_fg="$(foreground_pgid "$current_pid")"
-
-            if [[ "$current_fg" != "$expected_fg" ||
-                  "$(process_start "$current_fg")" != "$expected_fg_start" ]]; then
-                archive_stale "$file" "foreground-process-changed:$expected_fg->$current_fg"
-                continue
-            fi
-        fi
-
-        # Count the attempt before sending, so UserPromptSubmit cannot race us.
-        # An attempt that cannot be counted is not sent: nothing else would
-        # stop it being sent again on every check.
-        tmp="$file.tmp.$$"
-        if ! jq \
-                --argjson attempts "$((attempts + 1))" \
-                --argjson sent_at "$(date +%s)" \
-                '.resume_attempts = $attempts | .last_resume_sent_at = $sent_at' \
-                "$file" > "$tmp" ||
-           ! mv "$tmp" "$file"; then
-            rm -f "$tmp"
-            log "Could not record resume attempt; not sending session=$session_id"
-            continue
-        fi
-
-        if tmux -S "$socket" send-keys -t "$pane" -l "continue" 2>/dev/null &&
-           tmux -S "$socket" send-keys -t "$pane" Enter 2>/dev/null; then
-            sent=$((sent + 1))
-            log "Sent continue session=$session_id tmux=$expected_session pane=$pane attempt=$((attempts + 1))"
-        else
-            log "Failed to send continue session=$session_id tmux=$expected_session pane=$pane"
-        fi
-
-        # Spread sends out across sessions
-        sleep 1
-    done
-
-    shopt -u nullglob
-
-    printf '%s\n' "$sent"
-}
-
 do_warmup() {
     exec 8>"$STATE/warmup.lock"
 
@@ -1093,35 +806,16 @@ reschedule() {
 }
 
 scheduled() {
-    local now seven_reset sent
-    now="$(date +%s)"
-    seven_reset="$(cat "$STATE/seven_day_reset" 2>/dev/null || true)"
-
     # atd ran us, so whatever stall was reported is over
-    printf '%s\n' "$now" > "$STATE/last_run"
+    printf '%s\n' "$(date +%s)" > "$STATE/last_run"
     notify_recovered "Claude Plus's scheduled runs are happening again." stalled
 
-    if is_weekly_limited; then
-        log "Scheduled run postponed because seven-day limit is active"
-        arm_job "$((seven_reset + 15))" "seven-day-reset"
-        return 0
-    fi
-
-    # Real work that stopped on a limit comes before any warmup
-    sent="$(resume_pending)"
-
-    if [[ "$sent" =~ ^[0-9]+$ ]] && (( sent > 0 )); then
-        # Give UserPromptSubmit and the next statusLine refresh time to land
-        arm_job "$((now + 90))" "resume-verification"
-        return 0
-    fi
-
-    # Nothing to resume, or two attempts went unanswered
+    # do_warmup waits out a weekly limit itself
     do_warmup || true
 }
 
 show_status() {
-    local five_reset at_target at_job last_success reason failures pending_count auth_status
+    local five_reset at_target at_job last_success reason failures auth_status
     local last_run scheduler overdue=""
 
     five_reset="$(cat "$STATE/five_hour_reset" 2>/dev/null || true)"
@@ -1131,7 +825,6 @@ show_status() {
     last_run="$(cat "$STATE/last_run" 2>/dev/null || true)"
     reason="$(cat "$STATE/at_reason" 2>/dev/null || true)"
     failures="$(cat "$STATE/failure_count" 2>/dev/null || printf '0')"
-    pending_count="$(find "$PENDING" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
 
     if [[ -f "$STATE/auth_required" ]]; then
         auth_status="RELOGIN MAY BE REQUIRED"
@@ -1166,7 +859,6 @@ show_status() {
 
     echo "at job          : ${at_job:-none}"
     echo "Reason          : ${reason:-none}"
-    echo "Pending         : $pending_count"
     echo "Failures        : $failures"
     echo "Auth status     : $auth_status"
 
@@ -1207,48 +899,12 @@ notify_test() {
     return "$rc"
 }
 
-show_pending() {
-    local file found=0
-
-    shopt -s nullglob
-
-    for file in "$PENDING"/*.json; do
-        found=1
-
-        jq -r '
-            "session        : \(.session_id // "-")",
-            "tmux session   : \(.tmux_session // "-")",
-            "tmux pane      : \(.tmux_pane // "-")",
-            "cwd            : \(.cwd // "-")",
-            "pane command   : \(.pane_command // "-")",
-            "resume attempts: \(.resume_attempts // 0)",
-            "hit at (epoch) : \(.hit_at // "-")",
-            ""
-        ' "$file"
-    done
-
-    shopt -u nullglob
-
-    if (( found == 0 )); then
-        echo "No pending sessions."
-    fi
-}
-
 case "${1:-}" in
     statusline)
         statusline
         ;;
     observe)
         observe
-        ;;
-    rate-limit)
-        rate_limit
-        ;;
-    prompt-submit)
-        prompt_submit
-        ;;
-    session-end)
-        session_end
         ;;
     warmup)
         do_warmup
@@ -1265,9 +921,6 @@ case "${1:-}" in
     status)
         show_status
         ;;
-    pending)
-        show_pending
-        ;;
     notify-test)
         notify_test
         ;;
@@ -1275,7 +928,7 @@ case "${1:-}" in
         echo "$VERSION"
         ;;
     *)
-        echo "Usage: $0 {statusline|observe|rate-limit|prompt-submit|session-end|warmup|scheduled|reschedule|scheduler-check|status|pending|notify-test|version}" >&2
+        echo "Usage: $0 {statusline|observe|warmup|scheduled|reschedule|scheduler-check|status|notify-test|version}" >&2
         exit 2
         ;;
 esac
@@ -1286,17 +939,12 @@ chmod +x "$BIN"
 # Make sure the script just generated parses
 bash -n "$BIN"
 
-TMP_SETTINGS="$(mktemp)"
+# Removal above has already taken out every entry of ours; the status line
+# wrapper is all Claude Plus adds. Inside another program's chain, not even that.
+if (( KEEP_CHAIN == 0 )); then
+    TMP_SETTINGS="$(mktemp)"
 
-# Removal above has already taken out every entry of ours, so this only adds
-jq \
-    --argjson wrap "$( (( KEEP_CHAIN )) && echo false || echo true )" \
-    --arg status_cmd "$BIN statusline" \
-    --arg rate_cmd "$BIN rate-limit" \
-    --arg prompt_cmd "$BIN prompt-submit" \
-    --arg end_cmd "$BIN session-end" \
-    '
-    if $wrap then
+    jq --arg status_cmd "$BIN statusline" '
         .statusLine = (
             (.statusLine // {})
             + {
@@ -1304,59 +952,11 @@ jq \
                 "command": $status_cmd
             }
         )
-    else
-        .
-    end
-    |
-    .hooks = (.hooks // {})
-    |
-    .hooks.StopFailure = (
-        (.hooks.StopFailure // [])
-        + [
-            {
-                "matcher": "rate_limit",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": $rate_cmd
-                    }
-                ]
-            }
-        ]
-    )
-    |
-    .hooks.UserPromptSubmit = (
-        (.hooks.UserPromptSubmit // [])
-        + [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": $prompt_cmd
-                    }
-                ]
-            }
-        ]
-    )
-    |
-    .hooks.SessionEnd = (
-        (.hooks.SessionEnd // [])
-        + [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": $end_cmd
-                    }
-                ]
-            }
-        ]
-    )
-    ' \
-    "$SETTINGS" > "$TMP_SETTINGS"
+    ' "$SETTINGS" > "$TMP_SETTINGS"
 
-jq empty "$TMP_SETTINGS"
-mv "$TMP_SETTINGS" "$SETTINGS"
+    jq empty "$TMP_SETTINGS"
+    mv "$TMP_SETTINGS" "$SETTINGS"
+fi
 
 # Removal dropped the old at job; put the run the previous version had
 # planned back on the new one
@@ -1382,7 +982,4 @@ echo "Main script     : $BIN"
 echo
 echo "Check:"
 echo "  $BIN status"
-echo "  $BIN pending"
-echo
-echo "Inside Claude Code, check /hooks for StopFailure(rate_limit), UserPromptSubmit and SessionEnd."
 

@@ -15,8 +15,7 @@ same order, and the language nav row on line 3 differs only in which entry is
 left unlinked.
 
 **Tests.** `bash tests/run.sh` runs the integration suite in a throwaway
-`HOME` with fake `claude`, `at`, `atq`, `atrm` and a notifier, plus a private
-tmux socket, so the real at queue, settings and tmux sessions are never
-touched. Run it before committing any change to the installer or the script
+`HOME` with fake `claude`, `at`, `atq`, `atrm`, `systemctl`, `pgrep` and a
+notifier, so the real at queue and settings are never touched. Run it before committing any change to the installer or the script
 it generates, and add a case when fixing a bug. GitHub Actions runs it on Ubuntu for every
 push.

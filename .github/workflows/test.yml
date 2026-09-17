@@ -10,5 +10,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # jq, flock and timeout ship with the runner; claude and at are faked
-      - run: sudo apt-get update && sudo apt-get install -y tmux
       - run: bash tests/run.sh

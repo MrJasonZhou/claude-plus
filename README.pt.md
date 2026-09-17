@@ -2,29 +2,22 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Italiano](README.it.md) | Português | [العربية](README.ar.md)
 
-Três coisas que o Claude Code não faz por você, resolvidas enquanto você está longe do teclado.
+Duas coisas que o Claude Code não faz por você, resolvidas enquanto você está longe do teclado.
 
-- **Retomada** — uma sessão parada por um limite de uso volta a andar sozinha no instante em que o limite é reiniciado, seguindo o trabalho que estava pela metade.
-- **Janela sempre aberta** — se não há nada a retomar, uma nova janela de 5 horas é aberta mesmo assim, para que seu reinício caia fora do seu horário de trabalho em vez de no meio dele.
-- **Aviso** — quando não consegue mais seguir sozinho, ele avisa: Bark, ntfy, e-mail, ou qualquer outro canal que você queira ligar.
+- **Janela sempre aberta** — uma nova janela de 5 horas é aberta assim que a anterior é reiniciada, mesmo sem ninguém usando o Claude Code, então quando você volta já há uma cota cheia em andamento.
+- **Aviso** — quando isso deixa de funcionar, ele avisa: Bark, ntfy, e-mail, ou qualquer outro canal que você queira ligar.
+
+Retomar uma sessão depois de um limite de uso é algo que o Claude Code agora faz sozinho: veja "Continue automatically at usage limit" em `/config`. O Claude Plus também fazia isso antes da 3.0.0 e, a partir dela, deixa isso para o Claude Code.
 
 ## Para que serve
 
-**Recuperar de um limite de 5 horas.** Normalmente, atingir o teto significa que a sessão simplesmente para e você volta mais tarde para reiniciá-la à mão. O Claude Plus reinicia por você no instante em que o limite é reiniciado, então o trabalho segue de onde parou — inclusive enquanto você dorme ou está longe da mesa.
+**Quando a janela abre decide quando ela termina.** Uma janela de 5 horas começa no seu primeiro pedido, não numa hora fixa. Comece a trabalhar às 9h e a janela vai das 9h às 14h; esgote a cota às 11h e você fica travado até as 14h. Se em vez disso um pedido mínimo tivesse aberto a janela às 6h, ela expiraria às 11h — exatamente quando você fica sem nada — com uma cota nova já esperando. Com uma janela sempre aberta, já há uma em andamento quando você começa: o que resta dela é cota que de outro modo se perderia, e uma nova chega em no máximo cinco horas, geralmente bem antes.
 
-**Quando a janela abre decide quando ela termina.** Uma janela de 5 horas começa no seu primeiro pedido, não numa hora fixa. Comece a trabalhar às 9h e a janela vai das 9h às 14h; esgote a cota às 11h e você fica travado até as 14h. Se em vez disso um pedido mínimo tivesse aberto a janela às 6h, ela expiraria às 11h — exatamente quando você fica sem nada — com uma cota nova já esperando. Manter uma janela sempre aberta empurra o reinício para antes do seu horário de trabalho, em vez de deixá-lo no meio dele.
-
-**Saber quando ele parou de ajudar.** A recuperação automática funciona enquanto seu login for válido; assim que expira, nada mais funciona. O Claude Plus percebe esse caso e avisa, em vez de falhar em silêncio o fim de semana inteiro.
-
-## O que ele não vai fazer
-
-Retomar significa digitar no terminal em que você estava trabalhando, por isso ele é cuidadoso quanto a onde digita. Uma sessão só é retomada se ainda estiver lá, intacta, exatamente como o limite a deixou. Se você a fechou, seguiu para outra coisa, ou iniciou outra coisa naquele terminal, o Claude Plus não mexe e fica calado. Sessões fora do tmux nunca são retomadas — não há onde digitar.
-
-Os limites de uso em si nunca são anunciados. São rotina, a retomada cuida deles, e uma mensagem a cada vez seria apenas ruído.
+**Saber quando ele parou de ajudar.** Manter janelas abertas só funciona enquanto seu login for válido e o agendador estiver rodando; se um dos dois parar, nada acontece. O Claude Plus percebe qualquer um dos casos e avisa, em vez de falhar em silêncio o fim de semana inteiro.
 
 ## Requisitos
 
-Linux, com `claude`, `jq`, `at` (com `atd` em execução), `flock`, `timeout`, `tmux`, GNU `date`.
+Linux, com `claude`, `jq`, `at` (com `atd` em execução), `flock`, `timeout`, GNU `date`.
 
 ```bash
 sudo systemctl enable --now atd
@@ -44,15 +37,14 @@ cd claude-plus
 bash install-claude-plus.sh
 ```
 
-O instalador envolve a sua status line existente, que continua aparecendo exatamente como antes, e adiciona os próprios hooks, sem tocar nos de outras ferramentas. Seu `settings.json` é salvo antes, e rodar o instalador de novo é uma atualização limpa, não uma segunda cópia. Uma atualização preserva o que está em andamento: sessões esperando retomada, a próxima execução agendada e o seu notificador.
+O instalador envolve a sua status line existente, que continua aparecendo exatamente como antes; é a única mudança que ele faz nas suas configurações. Seu `settings.json` é salvo antes, e rodar o instalador de novo é uma atualização limpa, não uma segunda cópia. Uma atualização preserva a próxima execução agendada, o estado dela e o seu notificador. Atualizar a partir da 2.x também remove os hooks que essas versões adicionavam para retomar sessões.
 
 ## Uso
 
 No dia a dia não há nada para executar — ele trabalha sozinho. Quando quiser olhar:
 
 ```bash
-~/.claude/claude-plus/claude-plus.sh status   # o agendador está rodando, o que está agendado, o que espera, a autenticação ainda vale
-~/.claude/claude-plus/claude-plus.sh pending  # sessões esperando retomada
+~/.claude/claude-plus/claude-plus.sh status   # o agendador está rodando, o que está agendado, a autenticação ainda vale
 tail -f ~/.claude/claude-plus/claude-plus.log # o que ele andou fazendo
 ```
 
@@ -64,10 +56,10 @@ O Claude Plus fica quieto enquanto nada precisa de você, e informa quatro coisa
 |---|---|
 | **Desconectado** | Seu login do Claude Code expirou; nada pode ser aberto até você entrar de novo |
 | **Falhas repetidas** | Vários warm-ups seguidos falharam |
-| **Agendador parado** | Uma execução agendada está muito atrasada, então nada está sendo mantido nem retomado; geralmente o `atd` não está rodando |
+| **Agendador parado** | Uma execução agendada está muito atrasada, então nenhuma janela está sendo mantida aberta; geralmente o `atd` não está rodando |
 | **De volta ao normal** | Ele se recuperou de qualquer um dos casos acima |
 
-Cada um é anunciado uma única vez, não a cada nova tentativa: um problema durante a noite custa uma só mensagem.
+Cada um é anunciado uma única vez, não a cada nova tentativa: um problema durante a noite custa uma só mensagem. Os limites de uso em si nunca são anunciados: são rotina, e o Claude Code retoma sozinho depois deles.
 
 Para escolher como receber o aviso, copie um dos exemplos e preencha sua chave ou servidor:
 

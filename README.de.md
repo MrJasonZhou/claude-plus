@@ -2,29 +2,22 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | Deutsch | [Français](README.fr.md) | [Italiano](README.it.md) | [Português](README.pt.md) | [العربية](README.ar.md)
 
-Drei Dinge, die Claude Code nicht für Sie erledigt — erledigt, während Sie nicht an der Tastatur sitzen.
+Zwei Dinge, die Claude Code nicht für Sie erledigt — erledigt, während Sie nicht an der Tastatur sitzen.
 
-- **Fortsetzen** — eine Sitzung, die an einem Limit gestoppt ist, startet sich in dem Moment neu, in dem das Limit zurückgesetzt wird, und führt die begonnene Arbeit weiter.
-- **Fenster offen halten** — gibt es nichts fortzusetzen, wird trotzdem ein neues 5-Stunden-Fenster geöffnet, damit sein Reset außerhalb Ihrer Arbeitszeit liegt statt mittendrin.
-- **Benachrichtigen** — kommt es allein nicht weiter, sagt es Ihnen Bescheid: Bark, ntfy, E-Mail oder was immer Sie anschließen möchten.
+- **Fenster offen halten** — sobald das letzte 5-Stunden-Fenster zurückgesetzt wird, öffnet sich ein neues, auch wenn gerade niemand Claude Code benutzt; wenn Sie zurückkommen, läuft schon ein volles Kontingent.
+- **Benachrichtigen** — funktioniert das nicht mehr, sagt es Ihnen Bescheid: Bark, ntfy, E-Mail oder was immer Sie anschließen möchten.
+
+Eine Sitzung nach einem Nutzungslimit wieder aufzunehmen, erledigt Claude Code inzwischen selbst: siehe „Continue automatically at usage limit“ in `/config`. Claude Plus hat das vor 3.0.0 ebenfalls getan und überlässt es seitdem Claude Code.
 
 ## Wozu das gut ist
 
-**Erholung von einem 5-Stunden-Limit.** Normalerweise bleibt die Sitzung am Limit einfach stehen, und Sie starten sie später von Hand neu. Claude Plus startet sie in dem Augenblick neu, in dem das Limit zurückgesetzt wird, sodass die Arbeit dort weiterläuft, wo sie aufgehört hat — auch während Sie schlafen oder nicht am Schreibtisch sind.
+**Wann das Fenster öffnet, entscheidet, wann es endet.** Ein 5-Stunden-Fenster beginnt mit Ihrer ersten Anfrage, nicht zu einer festen Uhrzeit. Beginnen Sie um 9:00 zu arbeiten, läuft das Fenster von 9:00 bis 14:00; ist das Kontingent um 11:00 aufgebraucht, sind Sie bis 14:00 ausgesperrt. Hätte stattdessen eine winzige Anfrage das Fenster um 6:00 geöffnet, liefe es um 11:00 ab — genau dann, wenn Ihnen der Vorrat ausgeht — und ein frisches Kontingent stünde bereit. Läuft ständig ein Fenster, ist beim Arbeitsbeginn schon eines im Gang: Was davon übrig ist, wäre sonst ungenutzt verfallen, und ein frisches Kontingent ist höchstens fünf Stunden entfernt, meist viel weniger.
 
-**Wann das Fenster öffnet, entscheidet, wann es endet.** Ein 5-Stunden-Fenster beginnt mit Ihrer ersten Anfrage, nicht zu einer festen Uhrzeit. Beginnen Sie um 9:00 zu arbeiten, läuft das Fenster von 9:00 bis 14:00; ist das Kontingent um 11:00 aufgebraucht, sind Sie bis 14:00 ausgesperrt. Hätte stattdessen eine winzige Anfrage das Fenster um 6:00 geöffnet, liefe es um 11:00 ab — genau dann, wenn Ihnen der Vorrat ausgeht — und ein frisches Kontingent stünde bereit. Ein dauerhaft laufendes Fenster schiebt seinen Reset vor Ihre Arbeitszeit statt mitten hinein.
-
-**Erkennen, wann es nicht mehr hilft.** Die automatische Wiederaufnahme funktioniert nur, solange Ihre Anmeldung gültig ist; läuft sie ab, geht gar nichts mehr. Claude Plus bemerkt diesen Fall und sagt es Ihnen, statt ein ganzes Wochenende lang still zu scheitern.
-
-## Was es nicht tut
-
-Fortsetzen heißt, in das Terminal zu tippen, in dem Sie gearbeitet haben — deshalb ist es sehr vorsichtig damit, wohin es tippt. Eine Sitzung wird nur fortgesetzt, wenn sie noch da ist, unberührt und genau so, wie das Limit sie hinterlassen hat. Haben Sie sie geschlossen, sich anderem zugewandt oder in jenem Terminal etwas anderes gestartet, lässt Claude Plus sie in Ruhe und bleibt still. Sitzungen außerhalb von tmux werden überhaupt nie fortgesetzt — dort gibt es nichts, wohin getippt werden könnte.
-
-Über die Limits selbst wird nie berichtet. Sie sind Alltag, die Wiederaufnahme kümmert sich darum, und eine Nachricht pro Fall wäre nur Lärm.
+**Erkennen, wann es nicht mehr hilft.** Fenster offen zu halten funktioniert nur, solange Ihre Anmeldung gültig ist und der Planer läuft; fällt eines davon aus, passiert gar nichts. Claude Plus bemerkt beides und sagt es Ihnen, statt ein ganzes Wochenende lang still zu scheitern.
 
 ## Voraussetzungen
 
-Linux mit `claude`, `jq`, `at` (mit laufendem `atd`), `flock`, `timeout`, `tmux`, GNU `date`.
+Linux mit `claude`, `jq`, `at` (mit laufendem `atd`), `flock`, `timeout`, GNU `date`.
 
 ```bash
 sudo systemctl enable --now atd
@@ -44,15 +37,14 @@ cd claude-plus
 bash install-claude-plus.sh
 ```
 
-Der Installer legt sich um Ihre bestehende Status Line, die genau wie bisher angezeigt wird, und fügt eigene Hooks hinzu; fremde Hooks bleiben unangetastet. `settings.json` wird zuvor gesichert, und ein erneuter Lauf ist ein sauberes Upgrade statt einer zweiten Installation. Ein Upgrade übernimmt, was gerade läuft: Sitzungen, die auf Fortsetzung warten, den nächsten geplanten Lauf und Ihren Benachrichtiger.
+Der Installer legt sich um Ihre bestehende Status Line, die genau wie bisher angezeigt wird; das ist die einzige Änderung an Ihren Einstellungen. `settings.json` wird zuvor gesichert, und ein erneuter Lauf ist ein sauberes Upgrade statt einer zweiten Installation. Ein Upgrade übernimmt den nächsten geplanten Lauf, seinen Zustand und Ihren Benachrichtiger. Beim Upgrade von 2.x werden außerdem die Hooks entfernt, die jene Versionen zum Fortsetzen von Sitzungen angelegt haben.
 
 ## Verwendung
 
 Im Alltag gibt es nichts auszuführen — es arbeitet von selbst. Wenn Sie nachsehen möchten:
 
 ```bash
-~/.claude/claude-plus/claude-plus.sh status   # ob der Planer läuft, was geplant ist, was wartet, ob die Anmeldung noch gilt
-~/.claude/claude-plus/claude-plus.sh pending  # Sitzungen, die auf Fortsetzung warten
+~/.claude/claude-plus/claude-plus.sh status   # ob der Planer läuft, was geplant ist, ob die Anmeldung noch gilt
 tail -f ~/.claude/claude-plus/claude-plus.log # was es getan hat
 ```
 
@@ -64,10 +56,10 @@ Claude Plus bleibt still, solange nichts Ihre Aufmerksamkeit braucht, und meldet
 |---|---|
 | **Abgemeldet** | Ihre Claude-Code-Anmeldung ist abgelaufen; bis Sie sich neu anmelden, lässt sich nichts öffnen |
 | **Wiederholt fehlgeschlagen** | Mehrere Warm-ups hintereinander sind fehlgeschlagen |
-| **Planer steht** | Ein geplanter Lauf ist längst überfällig, es wird also nichts offen gehalten oder fortgesetzt; meist läuft `atd` nicht |
+| **Planer steht** | Ein geplanter Lauf ist längst überfällig, es wird also kein Fenster offen gehalten; meist läuft `atd` nicht |
 | **Wieder normal** | Es hat sich von einem der obigen Fälle erholt |
 
-Jede Meldung kommt einmal, nicht bei jedem Wiederholungsversuch — ein nächtliches Problem kostet Sie also eine einzige Nachricht.
+Jede Meldung kommt einmal, nicht bei jedem Wiederholungsversuch — ein nächtliches Problem kostet Sie also eine einzige Nachricht. Über Nutzungslimits selbst wird nie berichtet: Sie sind Alltag, und Claude Code macht danach von selbst weiter.
 
 Um zu wählen, wie Sie davon erfahren, kopieren Sie eine der Vorlagen und tragen Ihren eigenen Schlüssel oder Server ein:
 

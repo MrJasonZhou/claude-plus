@@ -2,29 +2,22 @@
 
 English | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Italiano](README.it.md) | [Português](README.pt.md) | [العربية](README.ar.md)
 
-Three things Claude Code does not do for you, handled while you are away from the keyboard.
+Two things Claude Code does not do for you, handled while you are away from the keyboard.
 
-- **Resume** — a session stopped by a rate limit starts itself again the moment the limit resets, continuing the work it was in the middle of.
-- **Keep the window open** — with nothing to resume, a new 5-hour window is opened anyway, so its reset lands outside your working hours instead of inside them.
-- **Alert** — when it cannot carry on by itself, it tells you: Bark, ntfy, email, or anything else you care to wire up.
+- **Keep the window open** — a new 5-hour window is opened as soon as the last one resets, even while nobody is using Claude Code, so a full quota is already under way when you come back.
+- **Alert** — when that stops working, it tells you: Bark, ntfy, email, or anything else you care to wire up.
+
+Picking a session back up after a usage limit is something Claude Code now does itself: see "Continue automatically at usage limit" in `/config`. Claude Plus did this too before 3.0.0, and leaves it to Claude Code from then on.
 
 ## Why it helps
 
-**Recovering from a 5-hour limit.** Hitting the cap normally means the session just stops, and you come back later to restart it by hand. Claude Plus restarts it for you the moment the limit resets, so the work picks up where it left off — including while you are asleep or away from the desk.
+**When the window opens decides when it ends.** A 5-hour window starts at your first request, not at a fixed hour. Begin work at 9:00 and the window runs 9:00-14:00; burn through the quota by 11:00 and you are locked out until 14:00. Had a tiny request opened the window at 6:00 instead, it would expire at 11:00 — exactly when you run dry — with a fresh quota already waiting. With a window always running, one is already under way when you start: whatever is left of it is quota that would otherwise go unused, and a fresh one is at most five hours off, usually much less.
 
-**When the window opens decides when it ends.** A 5-hour window starts at your first request, not at a fixed hour. Begin work at 9:00 and the window runs 9:00-14:00; burn through the quota by 11:00 and you are locked out until 14:00. Had a tiny request opened the window at 6:00 instead, it would expire at 11:00 — exactly when you run dry — with a fresh quota already waiting. Keeping a window always running pushes its reset ahead of your working hours instead of into the middle of them.
-
-**Knowing when it has stopped helping.** Automatic recovery works until your login expires, and then nothing works. Claude Plus notices that case and says so, rather than failing quietly all weekend.
-
-## What it will not do
-
-Resuming means typing into the terminal you were working in, so it is careful about where it types. A session is only resumed if it is still there, untouched, exactly as the limit left it. If you have closed it, moved on, or started something else in that terminal, Claude Plus leaves it alone and stays silent. Sessions running outside tmux are never resumed at all — there is nowhere to type.
-
-Rate limits themselves are never announced. They are routine, the resume handles them, and a message each time would only be noise.
+**Knowing when it has stopped helping.** Keeping windows open works until your login expires or the scheduler stops, and then nothing happens at all. Claude Plus notices either and says so, rather than failing quietly all weekend.
 
 ## Requirements
 
-Linux, with `claude`, `jq`, `at` (with `atd` running), `flock`, `timeout`, `tmux`, GNU `date`.
+Linux, with `claude`, `jq`, `at` (with `atd` running), `flock`, `timeout`, GNU `date`.
 
 ```bash
 sudo systemctl enable --now atd
@@ -44,15 +37,14 @@ cd claude-plus
 bash install-claude-plus.sh
 ```
 
-The installer wraps your existing status line, which keeps showing exactly as before, and adds its own hooks, leaving other tools' hooks untouched. Your `settings.json` is backed up first, and re-running the installer is a clean upgrade rather than a second copy. An upgrade carries over whatever is in progress: sessions waiting to resume, the next scheduled run, and your notifier.
+The installer wraps your existing status line, which keeps showing exactly as before; that is the only change it makes to your settings. Your `settings.json` is backed up first, and re-running the installer is a clean upgrade rather than a second copy. An upgrade carries over the next scheduled run, its state and your notifier. Upgrading from 2.x also removes the hooks those versions added to resume sessions.
 
 ## Usage
 
 Day to day there is nothing to run — it works on its own. When you want to look:
 
 ```bash
-~/.claude/claude-plus/claude-plus.sh status   # is the scheduler running, what is planned, what is waiting, is auth still good
-~/.claude/claude-plus/claude-plus.sh pending  # sessions waiting to be resumed
+~/.claude/claude-plus/claude-plus.sh status   # is the scheduler running, what is planned, is auth still good
 tail -f ~/.claude/claude-plus/claude-plus.log # what it has been doing
 ```
 
@@ -64,10 +56,10 @@ Claude Plus stays quiet unless something needs you, and tells you about four thi
 |---|---|
 | **Signed out** | Your Claude Code login has expired, so nothing can be opened until you sign in again |
 | **Repeatedly failing** | Several warm-ups in a row have failed |
-| **Scheduler stopped** | A planned run is long overdue, so nothing is being kept open or resumed; usually `atd` is not running |
+| **Scheduler stopped** | A planned run is long overdue, so no window is being kept open; usually `atd` is not running |
 | **Back to normal** | It recovered from any of the above |
 
-Each one is announced once, not on every retry, so a problem overnight costs you a single message.
+Each one is announced once, not on every retry, so a problem overnight costs you a single message. Usage limits themselves are never announced: they are routine, and Claude Code picks up after them on its own.
 
 To choose how you hear about it, copy one of the samples and fill in your own key or server:
 

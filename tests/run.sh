@@ -3,10 +3,10 @@
 #
 #   bash tests/run.sh
 #
-# Everything runs inside a throwaway directory: its own HOME, fake claude, at,
-# atq and atrm on PATH, and a private tmux socket. The real at queue,
-# settings.json and tmux sessions are never touched. Needs jq, tmux, flock and
-# timeout, which Claude Plus needs anyway.
+# Everything runs inside a throwaway directory: its own HOME, and fake claude,
+# at, atq, atrm, systemctl and pgrep on PATH. The real at queue and
+# settings.json are never touched. Needs jq, flock and timeout, which Claude
+# Plus needs anyway.
 
 set -uo pipefail
 
@@ -18,9 +18,8 @@ export CP_TEST
 CP_TEST="$(mktemp -d)"
 FAKES="$CP_TEST/bin"
 QUEUE="$CP_TEST/queue"
-SOCK="$CP_TEST/tmux.sock"
 mkdir -p "$FAKES" "$QUEUE"
-trap 'tmux -S "$SOCK" kill-server 2>/dev/null; rm -rf "$CP_TEST"' EXIT
+trap 'rm -rf "$CP_TEST"' EXIT
 
 PASS=0
 FAIL=0
@@ -220,10 +219,19 @@ install_cp >/dev/null
 check "wraps the status line"      '[[ $(jq -r .statusLine.command "$S") == "$CP statusline" ]]'
 check "saves the original"         '[[ $(cat "$BASE/original-statusline-command") == "$FAKES/cs" ]]'
 check "keeps statusLine siblings"  '[[ $(jq .statusLine.refreshInterval "$S") == 1 ]]'
-check "adds exactly three hooks"   '[[ $(grep -o "$MARKER" "$S" | wc -l) == 4 ]]'
+check "adds only the status line"  '[[ $(grep -o "$MARKER" "$S" | wc -l) == 1 ]] && ! jq -e ".hooks.StopFailure" "$S" >/dev/null'
 check "renders through wrapper"    '[[ $(render) == CS ]]'
 
 jq '.env = {"FOO":"1"} | .hooks.SessionEnd += [{"hooks":[{"type":"command","command":"/opt/save"}]}]' "$S" > "$S.t" && mv "$S.t" "$S"
+# What versions before 3.0.0 also registered, to resume sessions themselves
+jq --arg cp "$CP" '
+    .hooks.StopFailure += [{"matcher":"rate_limit","hooks":[{"type":"command","command":($cp + " rate-limit")}]}]
+    | .hooks.UserPromptSubmit += [{"hooks":[{"type":"command","command":($cp + " prompt-submit")}]}]
+    | .hooks.SessionEnd += [{"hooks":[{"type":"command","command":($cp + " session-end")}]}]
+' "$S" > "$S.t" && mv "$S.t" "$S"
+mkdir -p "$BASE/state/pending" "$BASE/state/stale"
+echo '{"session_id":"old"}' > "$BASE/state/pending/old.json"
+echo "2026-01-01 00:00:00 an earlier line" > "$BASE/claude-plus.log"
 make_notifier
 { echo "$CP scheduled"; head -c 1048576 /dev/zero | tr '\0' x; } > "$QUEUE/1"
 echo "/usr/local/bin/nightly" > "$QUEUE/2"
@@ -231,7 +239,10 @@ echo "/usr/local/bin/nightly" > "$QUEUE/2"
 install_cp >/dev/null
 check "upgrade: original not doubled"  '[[ $(cat "$BASE/original-statusline-command") == "$FAKES/cs" ]]'
 check "upgrade: later edits survive"   '[[ $(jq -r .env.FOO "$S") == 1 ]]'
-check "upgrade: still three hooks"     '[[ $(grep -o "$MARKER" "$S" | wc -l) == 4 ]]'
+check "upgrade: old resume hooks gone"  '[[ $(grep -o "$MARKER" "$S" | wc -l) == 1 && $(jq -c ".hooks | keys" "$S") == "[\"PreToolUse\",\"SessionEnd\",\"UserPromptSubmit\"]" ]]'
+check "upgrade: user hooks in those events kept" '[[ $(jq -r ".hooks.UserPromptSubmit[0].hooks[0].command, .hooks.SessionEnd[0].hooks[0].command" "$S" | tr "\n" " ") == "/opt/audit /opt/save " ]]'
+check "upgrade: old resume queue removed"  '[[ ! -e "$BASE/state/pending" && ! -e "$BASE/state/stale" ]]'
+check "upgrade: log kept"              'grep -q "an earlier line" "$BASE/claude-plus.log"'
 check "upgrade: notifier survives"     '[[ -x "$BASE/notify.sh" ]]'
 check "upgrade: big job of ours gone"  '[[ ! -e "$QUEUE/1" ]]'
 check "upgrade: foreign job kept"      '[[ -e "$QUEUE/2" ]]'
@@ -363,10 +374,10 @@ installer=$!
 wait_for_probe
 check "probe is in place for the race"          '[[ $? == 0 ]]'
 cp_run scheduled >/dev/null
-cp_run prompt-submit <<< '{"session_id":"s"}' >/dev/null
+cp_run status >/dev/null
 wait "$installer"
 check "scheduled run during probe still ran"    '[[ -s "$CP_TEST/claude-runs" ]]'
-check "hook calls during probe are not a hit"   '[[ $(cat "$CP_TEST/probe.out") != *pass-through* && ! -e "$BASE" ]]'
+check "other calls during probe are not a hit"   '[[ $(cat "$CP_TEST/probe.out") != *pass-through* && ! -e "$BASE" ]]'
 
 for sig in HUP TERM INT; do
     use_slow_replacement "probe-$sig"
@@ -383,7 +394,7 @@ for sig in HUP TERM INT; do
     check "SIG$sig during probe: installer stops"          '[[ $rc != 0 ]]'
     check "SIG$sig during probe: real script restored"     'grep -q "^observe()" "$CP"'
     check "SIG$sig during probe: no temporary files left"  '! compgen -G "$BASE/.saved.*" >/dev/null && ! compgen -G "$BASE/.probe.*" >/dev/null'
-    check "SIG$sig during probe: still installed"          'grep -qF "$MARKER" "$S"'
+    check "SIG$sig during probe: still installed"          '[[ -d "$BASE/state" ]]'
 done
 
 # ======================================================================
@@ -401,7 +412,6 @@ echo 10                          > "$BASE/state/seven_day_pct"
 echo 2                           > "$BASE/state/failure_count"
 echo "$now"                      > "$BASE/state/last_success"
 : > "$BASE/state/notified-failing"
-echo '{"session_id":"waiting"}'  > "$BASE/state/pending/waiting.json"
 echo "$target"                   > "$BASE/state/at_target"
 echo pending-rate-limit          > "$BASE/state/at_reason"
 echo "$CP scheduled"             > "$QUEUE/7"
@@ -409,7 +419,6 @@ echo 7                           > "$BASE/state/at_job"
 make_notifier
 
 install_cp >/dev/null
-check "pending session kept"       '[[ -e "$BASE/state/pending/waiting.json" ]]'
 check "reset times kept"           '[[ $(cat "$BASE/state/five_hour_reset") == $((now + 3585)) && $(cat "$BASE/state/seven_day_pct") == 10 ]]'
 check "failure state kept"         '[[ $(cat "$BASE/state/failure_count") == 2 && -e "$BASE/state/notified-failing" ]]'
 check "last success kept"          '[[ $(cat "$BASE/state/last_success") == "$now" ]]'
@@ -536,126 +545,6 @@ echo ok > "$CP_TEST/claude-mode"
 cp_run scheduled >/dev/null
 check "a run clears the stall, says so"     '[[ ! -e "$BASE/state/notified-stalled" && $(count recovered notify-delivered) == 1 ]]'
 check "status shows the last run"           '[[ $(cp_run status) == *"Last run        : 20"* ]]'
-
-# ======================================================================
-section "resume only types into the terminal the limit left behind"
-
-new_home resume
-with_cs
-install_cp >/dev/null
-echo ok > "$CP_TEST/claude-mode"
-
-# Start a pane whose shell runs $2 in the foreground, standing in for claude
-# Wait for a pane's foreground command to become $2, rather than guessing
-# how long a slow machine needs
-wait_for_command() {
-    local i
-    for i in $(seq 1 100); do
-        [[ "$(tmux -S "$SOCK" display-message -p -t "$1" '#{pane_current_command}' 2>/dev/null)" == "$2" ]] && return 0
-        sleep 0.05
-    done
-    return 1
-}
-
-# Start a pane whose shell runs $2 in the foreground, standing in for claude
-start_pane() {
-    local i
-    for i in $(seq 1 40); do
-        tmux -S "$SOCK" new-session -d -s "$1" "bash --norc --noprofile" 2>/dev/null && break
-        sleep 0.05
-    done
-    wait_for_command "$1" bash
-    tmux -S "$SOCK" send-keys -t "$1" "$2" Enter
-    wait_for_command "$1" "${2%% *}"
-}
-
-# Kill the server and wait for its process to be gone. A server that is still
-# exiting unlinks its socket path on the way out, which would take a newly
-# started server's socket with it.
-stop_tmux() {
-    local pid i
-    pid="$(tmux -S "$SOCK" list-sessions -F '#{pid}' 2>/dev/null | head -1)"
-    tmux -S "$SOCK" kill-server 2>/dev/null
-    [[ -n "$pid" ]] || return 0
-    for i in $(seq 1 100); do
-        kill -0 "$pid" 2>/dev/null || return 0
-        sleep 0.05
-    done
-}
-
-hit_limit() {
-    local pane
-    pane="$(tmux -S "$SOCK" display-message -p -t "$2" '#{pane_id}')"
-    printf '{"session_id":"%s","cwd":"/tmp"}' "$1" |
-        TMUX="$SOCK,0,0" TMUX_PANE="$pane" in_home "$CP" rate-limit
-}
-
-# Something should arrive: poll for it
-got() {
-    local i
-    for i in $(seq 1 60); do
-        grep -qx continue "$CP_TEST/$1" 2>/dev/null && return 0
-        sleep 0.05
-    done
-    return 1
-}
-
-# Nothing should arrive: the only proof is to give it time and look once
-none_got() {
-    local f
-    sleep 1
-    for f in "$@"; do
-        grep -qx continue "$CP_TEST/$f" 2>/dev/null && return 1
-    done
-    return 0
-}
-
-stale_reason() {
-    grep "archived as stale file=$1.json" "$BASE/claude-plus.log" | tail -1 | sed 's/.*reason=//'
-}
-
-start_pane r1 "cat > $CP_TEST/r1.out"
-hit_limit s1 r1
-check "limit recorded with process identity" \
-    '[[ -n $(jq -r ".fg_pgid // empty" "$BASE/state/pending/s1.json") && -n $(jq -r ".fg_start // empty" "$BASE/state/pending/s1.json") ]]'
-cp_run scheduled >/dev/null
-check "same terminal: continue sent"      'got r1.out'
-check "attempt counted"                   '[[ $(jq .resume_attempts "$BASE/state/pending/s1.json") == 1 ]]'
-
-jq '.resume_attempts = 2' "$BASE/state/pending/s1.json" > "$CP_TEST/t" && mv "$CP_TEST/t" "$BASE/state/pending/s1.json"
-cp_run scheduled >/dev/null
-check "exhausted: archived"               '[[ ! -e "$BASE/state/pending/s1.json" && $(stale_reason s1) == resume-attempts-exhausted ]]'
-check "exhausted: no longer listed"       '[[ $(cp_run pending) == "No pending sessions." ]]'
-
-start_pane r2 "cat > $CP_TEST/r2a.out"
-hit_limit s2 r2
-tmux -S "$SOCK" send-keys -t r2 C-c
-wait_for_command r2 bash
-tmux -S "$SOCK" send-keys -t r2 "cat > $CP_TEST/r2b.out" Enter
-wait_for_command r2 cat
-cp_run scheduled >/dev/null
-check "new claude in same shell: not sent" 'none_got r2a.out r2b.out'
-check "new claude in same shell: archived" '[[ $(stale_reason s2) == foreground-process-changed:* ]]'
-
-stop_tmux
-start_pane work "cat > $CP_TEST/r3a.out"
-hit_limit s3 work
-check "restart case uses a reused pane id" '[[ $(jq -r .tmux_pane "$BASE/state/pending/s3.json") == %0 ]]'
-stop_tmux
-start_pane work "cat > $CP_TEST/r3b.out"
-check "rebuilt pane matches name and command" \
-    '[[ $(tmux -S "$SOCK" display-message -p -t work "#{pane_id} #S #{pane_current_command}") == "%0 work cat" ]]'
-cp_run scheduled >/dev/null
-check "restarted tmux server: not sent"   'none_got r3b.out'
-check "restarted tmux server: archived"   '[[ $(stale_reason s3) == pane-process-changed:* ]]'
-
-start_pane r4 "cat > $CP_TEST/r4.out"
-hit_limit s4 r4
-jq 'del(.pane_pid, .fg_pgid, .fg_start)' "$BASE/state/pending/s4.json" > "$CP_TEST/t" && mv "$CP_TEST/t" "$BASE/state/pending/s4.json"
-cp_run scheduled >/dev/null
-check "entry from an older version: still resumed" 'got r4.out'
-
-stop_tmux
 
 # ======================================================================
 echo
