@@ -1,6 +1,6 @@
 {
   "name": "@claude-plus/claude-plus",
-  "version": "2.3.1",
+  "version": "2.4.0",
   "description": "Enhancements for Claude Code: resumes rate-limited tmux sessions and keeps the 5-hour window warm",
   "bin": {
     "claude-plus": "install-claude-plus.sh"

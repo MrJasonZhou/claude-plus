@@ -51,20 +51,21 @@ Der Installer legt sich um Ihre bestehende Status Line, die genau wie bisher ang
 Im Alltag gibt es nichts auszuführen — es arbeitet von selbst. Wenn Sie nachsehen möchten:
 
 ```bash
-~/.claude/claude-plus/claude-plus.sh status   # was geplant ist, was wartet, ob die Anmeldung noch gilt
+~/.claude/claude-plus/claude-plus.sh status   # ob der Planer läuft, was geplant ist, was wartet, ob die Anmeldung noch gilt
 ~/.claude/claude-plus/claude-plus.sh pending  # Sitzungen, die auf Fortsetzung warten
 tail -f ~/.claude/claude-plus/claude-plus.log # was es getan hat
 ```
 
 ## Benachrichtigungen
 
-Claude Plus bleibt still, solange nichts Ihre Aufmerksamkeit braucht, und meldet genau drei Dinge:
+Claude Plus bleibt still, solange nichts Ihre Aufmerksamkeit braucht, und meldet vier Dinge:
 
 | | |
 |---|---|
 | **Abgemeldet** | Ihre Claude-Code-Anmeldung ist abgelaufen; bis Sie sich neu anmelden, lässt sich nichts öffnen |
 | **Wiederholt fehlgeschlagen** | Mehrere Warm-ups hintereinander sind fehlgeschlagen |
-| **Wieder normal** | Es hat sich von einem der beiden Fälle erholt |
+| **Planer steht** | Ein geplanter Lauf ist längst überfällig, es wird also nichts offen gehalten oder fortgesetzt; meist läuft `atd` nicht |
+| **Wieder normal** | Es hat sich von einem der obigen Fälle erholt |
 
 Jede Meldung kommt einmal, nicht bei jedem Wiederholungsversuch — ein nächtliches Problem kostet Sie also eine einzige Nachricht.
 

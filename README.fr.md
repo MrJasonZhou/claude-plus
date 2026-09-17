@@ -51,20 +51,21 @@ L'installateur enveloppe votre status line existante, qui s'affiche exactement c
 Au quotidien, il n'y a rien à lancer — il travaille tout seul. Quand vous voulez regarder :
 
 ```bash
-~/.claude/claude-plus/claude-plus.sh status   # ce qui est planifié, ce qui attend, l'authentification est-elle valide
+~/.claude/claude-plus/claude-plus.sh status   # le planificateur tourne-t-il, ce qui est planifié, ce qui attend, l'authentification est-elle valide
 ~/.claude/claude-plus/claude-plus.sh pending  # sessions attendant une reprise
 tail -f ~/.claude/claude-plus/claude-plus.log # ce qu'il a fait
 ```
 
 ## Alertes
 
-Claude Plus reste silencieux tant que rien ne requiert votre attention, et ne signale que trois choses :
+Claude Plus reste silencieux tant que rien ne requiert votre attention, et ne signale que quatre choses :
 
 | | |
 |---|---|
 | **Déconnecté** | Votre authentification Claude Code a expiré : rien ne peut être ouvert tant que vous ne vous reconnectez pas |
 | **Échecs répétés** | Plusieurs warm-ups d'affilée ont échoué |
-| **Retour à la normale** | Il s'est remis de l'un ou l'autre des cas ci-dessus |
+| **Planificateur arrêté** | Une exécution prévue a largement dépassé son heure : rien n'est maintenu ni repris ; en général `atd` ne tourne pas |
+| **Retour à la normale** | Il s'est remis de l'un des cas ci-dessus |
 
 Chaque cas est signalé une seule fois, pas à chaque nouvelle tentative : un problème nocturne vous coûte un unique message.
 

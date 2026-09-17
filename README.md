@@ -51,20 +51,21 @@ The installer wraps your existing status line, which keeps showing exactly as be
 Day to day there is nothing to run — it works on its own. When you want to look:
 
 ```bash
-~/.claude/claude-plus/claude-plus.sh status   # what is scheduled, what is waiting, is auth still good
+~/.claude/claude-plus/claude-plus.sh status   # is the scheduler running, what is planned, what is waiting, is auth still good
 ~/.claude/claude-plus/claude-plus.sh pending  # sessions waiting to be resumed
 tail -f ~/.claude/claude-plus/claude-plus.log # what it has been doing
 ```
 
 ## Alerts
 
-Claude Plus stays quiet unless something needs you, and tells you about exactly three things:
+Claude Plus stays quiet unless something needs you, and tells you about four things:
 
 | | |
 |---|---|
 | **Signed out** | Your Claude Code login has expired, so nothing can be opened until you sign in again |
 | **Repeatedly failing** | Several warm-ups in a row have failed |
-| **Back to normal** | It recovered from either of the above |
+| **Scheduler stopped** | A planned run is long overdue, so nothing is being kept open or resumed; usually `atd` is not running |
+| **Back to normal** | It recovered from any of the above |
 
 Each one is announced once, not on every retry, so a problem overnight costs you a single message.
 

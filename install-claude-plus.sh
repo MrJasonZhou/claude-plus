@@ -413,7 +413,7 @@ cat > "$BIN" <<'CLAUDE_PLUS'
 # option) any later version. See the LICENSE file for details.
 set -u
 
-VERSION="2.3.1"
+VERSION="2.4.0"
 
 BASE="$HOME/.claude/claude-plus"
 STATE="$BASE/state"
@@ -460,12 +460,14 @@ notify_once() {
     return 0
 }
 
-# Announce the recovery only to those who heard about the problem. Their
-# flags stay until the announcement is delivered, so it is retried too.
+# Announce a recovery only to those who heard about the problem: $1 is the
+# message, the rest are the notify_once keys it clears. Their flags stay until
+# the announcement is delivered, so it is retried too.
 notify_recovered() {
-    local key flags=()
+    local message="$1" key flags=()
+    shift
 
-    for key in auth failing; do
+    for key in "$@"; do
         if [[ -e "$STATE/notified-$key" ]]; then
             flags+=("$STATE/notified-$key")
         fi
@@ -473,7 +475,7 @@ notify_recovered() {
 
     (( ${#flags[@]} )) || return 0
 
-    if notify "recovered" "Claude Plus is back to normal; warmups are succeeding again."; then
+    if notify "recovered" "$message"; then
         rm -f "${flags[@]}"
     fi
     return 0
@@ -557,6 +559,68 @@ is_weekly_limited() {
     awk -v p="$seven_pct" 'BEGIN { exit !(p >= 99.9) }'
 }
 
+# Is atd running? 0 yes, 1 no, 2 cannot tell. systemd first, then the process
+# itself, for systems without systemd (WSL, containers) or an atd started by hand.
+scheduler_running() {
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet atd 2>/dev/null; then
+        return 0
+    fi
+
+    if command -v pgrep >/dev/null 2>&1; then
+        pgrep -x atd >/dev/null 2>&1 && return 0
+        return 1
+    fi
+
+    return 2
+}
+
+STALL_GRACE=300
+
+# A run well past its time and still queued means atd is not running it.
+#
+# This is called on every status line refresh, which can be every second, so
+# the common case must cost nothing: two comparisons, and out. Only when the
+# target is overdue and the last look was a while ago does a background check
+# run, one at a time, so the status line never waits on atq or a notifier, and
+# the log and any notification retry happen at most every STALL_GRACE seconds.
+maybe_check_stall() {
+    local now target last
+
+    target="$(cat "$STATE/at_target" 2>/dev/null || true)"
+    [[ "$target" =~ ^[0-9]+$ ]] || return 0
+
+    now="$(date +%s)"
+    (( now > target + STALL_GRACE )) || return 0
+
+    last="$(cat "$STATE/stall_checked_at" 2>/dev/null || true)"
+    [[ "$last" =~ ^[0-9]+$ ]] || last=0
+    (( now >= last + STALL_GRACE )) || return 0
+
+    (
+        exec 7>"$STATE/stall.lock"
+        flock -n 7 || exit 0
+        check_stall "$target"
+    ) </dev/null >/dev/null 2>&1 &
+}
+
+check_stall() {
+    local target="$1" job
+
+    # Another refresh may have looked while this one waited for the lock
+    local last
+    last="$(cat "$STATE/stall_checked_at" 2>/dev/null || true)"
+    [[ "$last" =~ ^[0-9]+$ ]] || last=0
+    (( $(date +%s) >= last + STALL_GRACE )) || return 0
+    date +%s > "$STATE/stall_checked_at"
+
+    job="$(cat "$STATE/at_job" 2>/dev/null || true)"
+    job_exists "$job" || return 0
+
+    log "Scheduled run is overdue and still queued: job=$job target=$(date -d "@$target" '+%Y-%m-%d %H:%M:%S')"
+    notify_once stalled "scheduler-stalled" \
+        "Claude Plus's run scheduled for $(date -d "@$target" '+%H:%M') has not happened, so nothing is being kept or resumed. Is atd running? Start it with: sudo systemctl enable --now atd"
+}
+
 observe() {
     local input
     input="$(cat)"
@@ -597,6 +661,8 @@ observe() {
         # Trust the official reset time, plus 15s of slack
         arm_job "$((five_reset + 15))" "official-five-hour-reset"
     fi
+
+    maybe_check_stall
 }
 
 statusline() {
@@ -966,7 +1032,7 @@ do_warmup() {
         printf '%s\n' "$started" > "$STATE/last_success"
         printf '0\n' > "$STATE/failure_count"
         rm -f "$STATE/auth_required"
-        notify_recovered
+        notify_recovered "Claude Plus is back to normal; warmups are succeeding again." auth failing
 
         log "Warmup succeeded output=$(printf '%s' "$output" | tr '\n' ' ' | cut -c1-200)"
 
@@ -1031,6 +1097,10 @@ scheduled() {
     now="$(date +%s)"
     seven_reset="$(cat "$STATE/seven_day_reset" 2>/dev/null || true)"
 
+    # atd ran us, so whatever stall was reported is over
+    printf '%s\n' "$now" > "$STATE/last_run"
+    notify_recovered "Claude Plus's scheduled runs are happening again." stalled
+
     if is_weekly_limited; then
         log "Scheduled run postponed because seven-day limit is active"
         arm_job "$((seven_reset + 15))" "seven-day-reset"
@@ -1052,11 +1122,13 @@ scheduled() {
 
 show_status() {
     local five_reset at_target at_job last_success reason failures pending_count auth_status
+    local last_run scheduler overdue=""
 
     five_reset="$(cat "$STATE/five_hour_reset" 2>/dev/null || true)"
     at_target="$(cat "$STATE/at_target" 2>/dev/null || true)"
     at_job="$(cat "$STATE/at_job" 2>/dev/null || true)"
     last_success="$(cat "$STATE/last_success" 2>/dev/null || true)"
+    last_run="$(cat "$STATE/last_run" 2>/dev/null || true)"
     reason="$(cat "$STATE/at_reason" 2>/dev/null || true)"
     failures="$(cat "$STATE/failure_count" 2>/dev/null || printf '0')"
     pending_count="$(find "$PENDING" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
@@ -1067,7 +1139,15 @@ show_status() {
         auth_status="OK"
     fi
 
+    scheduler_running
+    case $? in
+        0) scheduler="atd running" ;;
+        1) scheduler="ATD NOT RUNNING - nothing scheduled will run" ;;
+        *) scheduler="unknown" ;;
+    esac
+
     echo "Version         : $VERSION"
+    echo "Scheduler       : $scheduler"
 
     if [[ "$five_reset" =~ ^[0-9]+$ ]]; then
         echo "Official reset  : $(date -d "@$five_reset" '+%Y-%m-%d %H:%M:%S')"
@@ -1076,7 +1156,10 @@ show_status() {
     fi
 
     if [[ "$at_target" =~ ^[0-9]+$ ]]; then
-        echo "Scheduled       : $(date -d "@$at_target" '+%Y-%m-%d %H:%M:%S')"
+        if (( $(date +%s) > at_target + STALL_GRACE )) && job_exists "$at_job"; then
+            overdue=" (OVERDUE, still queued)"
+        fi
+        echo "Scheduled       : $(date -d "@$at_target" '+%Y-%m-%d %H:%M:%S')$overdue"
     else
         echo "Scheduled       : none"
     fi
@@ -1091,6 +1174,12 @@ show_status() {
         echo "Notify          : $NOTIFY"
     else
         echo "Notify          : not configured"
+    fi
+
+    if [[ "$last_run" =~ ^[0-9]+$ ]]; then
+        echo "Last run        : $(date -d "@$last_run" '+%Y-%m-%d %H:%M:%S')"
+    else
+        echo "Last run        : none"
     fi
 
     if [[ "$last_success" =~ ^[0-9]+$ ]]; then
@@ -1170,6 +1259,9 @@ case "${1:-}" in
     reschedule)
         reschedule
         ;;
+    scheduler-check)
+        scheduler_running
+        ;;
     status)
         show_status
         ;;
@@ -1183,7 +1275,7 @@ case "${1:-}" in
         echo "$VERSION"
         ;;
     *)
-        echo "Usage: $0 {statusline|observe|rate-limit|prompt-submit|session-end|warmup|scheduled|reschedule|status|pending|notify-test|version}" >&2
+        echo "Usage: $0 {statusline|observe|rate-limit|prompt-submit|session-end|warmup|scheduled|reschedule|scheduler-check|status|pending|notify-test|version}" >&2
         exit 2
         ;;
 esac
@@ -1272,8 +1364,16 @@ if ! "$BIN" reschedule; then
     echo "Warning: could not schedule the next run; it will be set on the next status line refresh." >&2
 fi
 
+# `at` accepts jobs whether or not atd runs them, so check the daemon itself
+SCHEDULER_RC=0
+"$BIN" scheduler-check || SCHEDULER_RC=$?
+
 echo
 echo "Claude Plus installed."
+if (( SCHEDULER_RC == 1 )); then
+    echo "Warning: atd is not running, so nothing Claude Plus schedules will run." >&2
+    echo "         Start it with: sudo systemctl enable --now atd" >&2
+fi
 if (( KEEP_CHAIN )); then
     echo "Your status line belongs to another program that calls Claude Plus; it was left as it is."
 fi

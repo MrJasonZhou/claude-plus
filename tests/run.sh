@@ -121,6 +121,19 @@ sleep 2
 printf Y
 EOF
 
+# systemctl and pgrep report atd up or down, as the test switches it
+cat > "$FAKES/systemctl" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == "is-active --quiet atd" ]] || exit 1
+[[ "$(cat "$CP_TEST/atd" 2>/dev/null)" == up ]]
+EOF
+
+cat > "$FAKES/pgrep" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == "-x atd" ]] || exit 1
+[[ "$(cat "$CP_TEST/atd" 2>/dev/null)" == up ]]
+EOF
+
 chmod +x "$FAKES"/*
 
 # ---------------------------------------------------------------- helpers
@@ -133,6 +146,17 @@ new_home() {
     BASE="$H/.claude/claude-plus"
     CP="$BASE/claude-plus.sh"
     rm -f "$QUEUE"/* "$CP_TEST"/claude-mode "$CP_TEST"/claude-runs "$CP_TEST"/notify-*
+    echo up > "$CP_TEST/atd"
+}
+
+# Poll a condition for up to three seconds, for work done in the background
+wait_until() {
+    local i
+    for i in $(seq 1 60); do
+        eval "$1" && return 0
+        sleep 0.05
+    done
+    return 1
 }
 
 in_home() {
@@ -171,8 +195,11 @@ EOF
     chmod +x "$BASE/notify.sh"
 }
 
+# How many lines of $2 are exactly $1; 0 when the file does not exist yet
 count() {
-    grep -cx "$1" "$CP_TEST/$2" 2>/dev/null || true
+    local n
+    n="$(grep -cx "$1" "$CP_TEST/$2" 2>/dev/null)" || true
+    echo "${n:-0}"
 }
 
 with_cs() {
@@ -447,6 +474,68 @@ for _ in 1 2; do cp_run warmup >/dev/null; done
 check "two failures: quiet"              '[[ $(count warmup-failing notify-attempts) == 0 ]]'
 cp_run warmup >/dev/null
 check "third failure: announced"         '[[ $(count warmup-failing notify-delivered) == 1 && -e "$BASE/state/notified-failing" ]]'
+
+# ======================================================================
+section "a scheduler that is not running gets noticed"
+
+new_home sched
+with_cs
+echo down > "$CP_TEST/atd"
+out="$(install_cp 2>&1)"
+check "install warns when atd is down"      '[[ $out == *"atd is not running"* ]]'
+check "status says atd is down"             '[[ $(cp_run status) == *"ATD NOT RUNNING"* ]]'
+echo up > "$CP_TEST/atd"
+out="$(install_cp 2>&1)"
+check "no warning when atd is up"           '[[ $out != *"atd is not running"* ]]'
+check "status says atd is running"          '[[ $(cp_run status) == *"Scheduler       : atd running"* ]]'
+check "status: no run yet"                  '[[ $(cp_run status) == *"Last run        : none"* ]]'
+
+make_notifier
+refresh() {
+    printf '{}' | cp_run observe >/dev/null
+}
+
+echo $(( $(date +%s) + 600 )) > "$BASE/state/at_target"
+refresh
+sleep 0.5
+check "target in the future: not looked at"  '[[ ! -e "$BASE/state/stall_checked_at" ]]'
+
+echo $(( $(date +%s) - 400 )) > "$BASE/state/at_target"
+echo 99 > "$BASE/state/at_job"
+refresh
+wait_until '[[ -e "$BASE/state/stall_checked_at" ]]'
+sleep 0.3
+check "overdue but no longer queued: quiet" '[[ $(count scheduler-stalled notify-attempts) == 0 ]]'
+
+echo "$CP scheduled" > "$QUEUE/5"
+echo 5 > "$BASE/state/at_job"
+rm -f "$BASE/state/stall_checked_at"
+echo 1 > "$CP_TEST/notify-fail"
+refresh
+wait_until '[[ $(count scheduler-stalled notify-attempts) == 1 ]]'
+check "overdue and queued: alert attempted" '[[ $(count scheduler-stalled notify-attempts) == 1 ]]'
+check "failed send: not marked"             '[[ ! -e "$BASE/state/notified-stalled" ]]'
+check "status flags the overdue run"        '[[ $(cp_run status) == *OVERDUE* ]]'
+
+refresh
+sleep 0.5
+check "throttled: no second look straight away" '[[ $(count scheduler-stalled notify-attempts) == 1 ]]'
+
+echo 0 > "$BASE/state/stall_checked_at"
+refresh
+wait_until '[[ $(count scheduler-stalled notify-delivered) == 1 ]]'
+check "retry after grace: delivered, marked" '[[ $(count scheduler-stalled notify-delivered) == 1 && -e "$BASE/state/notified-stalled" ]]'
+
+echo 0 > "$BASE/state/stall_checked_at"
+refresh
+wait_until '[[ $(cat "$BASE/state/stall_checked_at") != 0 ]]'
+sleep 0.3
+check "marked: not sent again"              '[[ $(count scheduler-stalled notify-attempts) == 2 ]]'
+
+echo ok > "$CP_TEST/claude-mode"
+cp_run scheduled >/dev/null
+check "a run clears the stall, says so"     '[[ ! -e "$BASE/state/notified-stalled" && $(count recovered notify-delivered) == 1 ]]'
+check "status shows the last run"           '[[ $(cp_run status) == *"Last run        : 20"* ]]'
 
 # ======================================================================
 section "resume only types into the terminal the limit left behind"

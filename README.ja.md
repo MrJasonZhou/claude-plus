@@ -51,19 +51,20 @@ bash install-claude-plus.sh
 普段は何も実行する必要がありません —— ひとりでに働きます。様子を見たいときは：
 
 ```bash
-~/.claude/claude-plus/claude-plus.sh status   # 何が予約され、何が待ち、認証は有効か
+~/.claude/claude-plus/claude-plus.sh status   # スケジューラは動いているか、何が予約され、何が待ち、認証は有効か
 ~/.claude/claude-plus/claude-plus.sh pending  # 再開待ちのセッション
 tail -f ~/.claude/claude-plus/claude-plus.log # 何をしてきたか
 ```
 
 ## 通知
 
-Claude Plus は普段は黙っていて、あなたの対応が要るときだけ知らせます。伝えるのは次の 3 つだけです。
+Claude Plus は普段は黙っていて、あなたの対応が要るときだけ知らせます。伝えるのは次の 4 つだけです。
 
 | | |
 |---|---|
 | **サインアウト** | Claude Code のログインが切れており、入り直すまで何も開けない |
 | **連続して失敗** | warm-up が何度か続けて失敗した |
+| **スケジューラ停止** | 予約した実行が大きく遅れており、窓の維持も再開も行われていない。たいていは `atd` が動いていない |
 | **復旧** | 上のいずれかから元に戻った |
 
 それぞれ一度だけ知らせ、リトライのたびには鳴りません。夜間に問題が起きても届くのは 1 通です。

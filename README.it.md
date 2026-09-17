@@ -51,20 +51,21 @@ L'installatore avvolge la tua status line esistente, che si vede esattamente com
 Nel quotidiano non c'è nulla da eseguire — lavora da solo. Quando vuoi dare un'occhiata:
 
 ```bash
-~/.claude/claude-plus/claude-plus.sh status   # cosa è pianificato, cosa attende, l'accesso è ancora valido
+~/.claude/claude-plus/claude-plus.sh status   # il pianificatore è attivo, cosa è pianificato, cosa attende, l'accesso è ancora valido
 ~/.claude/claude-plus/claude-plus.sh pending  # sessioni in attesa di ripresa
 tail -f ~/.claude/claude-plus/claude-plus.log # cosa ha fatto
 ```
 
 ## Avvisi
 
-Claude Plus resta in silenzio finché non serve il tuo intervento, e segnala esattamente tre cose:
+Claude Plus resta in silenzio finché non serve il tuo intervento, e segnala quattro cose:
 
 | | |
 |---|---|
 | **Disconnesso** | Il tuo accesso a Claude Code è scaduto: finché non rientri non si può aprire nulla |
 | **Fallimenti ripetuti** | Diversi warm-up di fila sono falliti |
-| **Tornato normale** | Si è ripreso da uno dei due casi sopra |
+| **Pianificatore fermo** | Un'esecuzione pianificata è molto in ritardo, quindi nulla viene tenuto aperto né ripreso; di solito `atd` non è in esecuzione |
+| **Tornato normale** | Si è ripreso da uno dei casi sopra |
 
 Ogni cosa viene segnalata una volta sola, non a ogni nuovo tentativo: un problema notturno ti costa un unico messaggio.
 

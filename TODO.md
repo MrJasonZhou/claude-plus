@@ -1,8 +1,9 @@
 # TODO
 
-Analysis of 2.3.1, 2026-09-17, revised the same day after discussion. Nothing
-here has been started. Code is referred to by function name rather than line
-number, since lines move.
+Analysis of 2.3.1, 2026-09-17, revised the same day after discussion. The
+scheduler check that was listed here is implemented in 2.4.0; nothing else has
+been started. Code is referred to by function name rather than line number,
+since lines move.
 
 ## Features
 
@@ -62,29 +63,6 @@ locally yet):
   collision above cannot happen, and rule 3 is a second line of defence.
 - Whether hitting the weekly limit writes anything different.
 
-#### Detect a scheduler that is not running
-
-The installer checks that `at` exists, not that `atd` is running. With `atd`
-stopped, `at` still accepts jobs that never run: Keep and Resume silently stop,
-while `status` keeps showing a scheduled time.
-
-Plan:
-- At install time, check `systemctl is-active atd`, falling back to
-  `pgrep -x atd` where there is no systemd (WSL, containers). Warn if it is not
-  running; the README already gives the command to start it.
-- `status` shows whether `atd` is running and when a scheduled run last
-  actually executed (`scheduled` writes a timestamp as it starts).
-- On a status line refresh, only once `at_target` is more than five minutes in
-  the past, check whether the job is still queued. If it is, send a
-  `scheduler-stalled` alert through `notify_once`, cleared by `recovered`. This
-  costs nothing while the target is in the future, which matters with a
-  one-second refresh interval.
-
-Accepted limitation: the status line only refreshes while Claude Code is open,
-so a scheduler that stops overnight is noticed the next time Claude Code
-starts. Catching it sooner would take a watchdog independent of `at` (cron or
-a systemd timer), one more dependency. Not worth it for now.
-
 ### Medium priority
 
 #### Estimated resets can shift the chain by five hours
@@ -139,6 +117,10 @@ this is the same fix for a continue Claude Plus sent itself.
   same as having no Keep at all. Whatever the phase, Keep is never worse, so an
   anchor adds complexity for little gain. This only holds while the chain keeps
   running, which is what the scheduler check is for.
+- **A watchdog independent of `at`.** The scheduler check runs on status line
+  refreshes, so a scheduler that stops overnight is only noticed the next time
+  Claude Code starts. Catching it sooner would take cron or a systemd timer,
+  one more dependency; the delay is acceptable.
 - **Alerting on a limit hit outside tmux.** Claude Code's own auto-continue now
   resumes such sessions, so the alert would mostly report a non-problem.
 
@@ -224,12 +206,11 @@ on each platform, and installing from a git clone would start to require Node.
 
 ## Suggested order
 
-1. Scheduler self-check and stall alert. Depends on nothing unknown.
-2. Collect a real limit hit (the log and transcript around it), then make
+1. Collect a real limit hit (the log and transcript around it), then make
    Resume defer to the native auto-continue using the transcript.
-3. `umask 077`.
-4. WSL: verify on a real machine, then document.
-5. Research reading usage without the interactive UI.
-6. macOS: verify Keychain access first; build the platform layer only if it
+2. `umask 077`.
+3. WSL: verify on a real machine, then document.
+4. Research reading usage without the interactive UI.
+5. macOS: verify Keychain access first; build the platform layer only if it
    works.
-7. Native Windows: not now.
+6. Native Windows: not now.

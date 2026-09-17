@@ -51,20 +51,21 @@ O instalador envolve a sua status line existente, que continua aparecendo exatam
 No dia a dia não há nada para executar — ele trabalha sozinho. Quando quiser olhar:
 
 ```bash
-~/.claude/claude-plus/claude-plus.sh status   # o que está agendado, o que espera, a autenticação ainda vale
+~/.claude/claude-plus/claude-plus.sh status   # o agendador está rodando, o que está agendado, o que espera, a autenticação ainda vale
 ~/.claude/claude-plus/claude-plus.sh pending  # sessões esperando retomada
 tail -f ~/.claude/claude-plus/claude-plus.log # o que ele andou fazendo
 ```
 
 ## Avisos
 
-O Claude Plus fica quieto enquanto nada precisa de você, e informa exatamente três coisas:
+O Claude Plus fica quieto enquanto nada precisa de você, e informa quatro coisas:
 
 | | |
 |---|---|
 | **Desconectado** | Seu login do Claude Code expirou; nada pode ser aberto até você entrar de novo |
 | **Falhas repetidas** | Vários warm-ups seguidos falharam |
-| **De volta ao normal** | Ele se recuperou de um dos casos acima |
+| **Agendador parado** | Uma execução agendada está muito atrasada, então nada está sendo mantido nem retomado; geralmente o `atd` não está rodando |
+| **De volta ao normal** | Ele se recuperou de qualquer um dos casos acima |
 
 Cada um é anunciado uma única vez, não a cada nova tentativa: um problema durante a noite custa uma só mensagem.
 

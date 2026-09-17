@@ -51,20 +51,21 @@ bash install-claude-plus.sh
 日常什麼都不用執行 —— 它自己會做事。想看看情況時：
 
 ```bash
-~/.claude/claude-plus/claude-plus.sh status   # 排了什麼、有誰在等、認證還有效嗎
+~/.claude/claude-plus/claude-plus.sh status   # 排程器在不在跑、排了什麼、有誰在等、認證還有效嗎
 ~/.claude/claude-plus/claude-plus.sh pending  # 等待續跑的工作階段
 tail -f ~/.claude/claude-plus/claude-plus.log # 它都做了些什麼
 ```
 
 ## 提醒
 
-Claude Plus 平時不出聲，只在需要你處理時才響，而且只報告三件事：
+Claude Plus 平時不出聲，只在需要你處理時才響，而且只報告四件事：
 
 | | |
 |---|---|
 | **已登出** | Claude Code 的登入已過期，在你重新登入之前什麼都開不了 |
 | **連續失敗** | 接連幾次保溫都失敗了 |
-| **恢復正常** | 從上面兩種情況中恢復了 |
+| **排程停了** | 排好的工作過了很久還沒執行，視窗不會被保溫、工作階段也不會續跑；通常是 `atd` 沒在執行 |
+| **恢復正常** | 從上面任一情況中恢復了 |
 
 每件事只通報一次，不會每次重試都響，所以過夜出問題只會收到一則訊息。
 
