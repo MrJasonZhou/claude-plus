@@ -18,4 +18,5 @@ left unlinked.
 `HOME` with fake `claude`, `at`, `atq`, `atrm` and a notifier, plus a private
 tmux socket, so the real at queue, settings and tmux sessions are never
 touched. Run it before committing any change to the installer or the script
-it generates, and add a case when fixing a bug.
+it generates, and add a case when fixing a bug. GitHub Actions runs it on Ubuntu for every
+push.
