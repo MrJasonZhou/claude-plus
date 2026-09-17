@@ -95,10 +95,14 @@ $EDITOR notify.sh
 ## アンインストール
 
 ```bash
-atrm "$(cat ~/.claude/claude-plus/state/at_job)"
-cp ~/.claude/settings.json.claude-plus-install-backup.<タイムスタンプ> ~/.claude/settings.json
-rm -rf ~/.claude/claude-plus
+npx @claude-plus/claude-plus uninstall
 ```
+
+クローンからの場合：`bash install-claude-plus.sh uninstall`。
+
+現在の `settings.json` をその場で編集し、Claude Plus が追加したものだけを取り除きます。元の statusLine は戻り、それ以外の設定やフックはすべてそのまま残ります —— Claude Plus をインストールした後に追加されたものも含めて。予約されたジョブは取り消され、`~/.claude/claude-plus/` は削除されます。あなたの `notify.sh` も一緒です。二度実行しても害はありません。
+
+アンインストール直前の `settings.json` のコピーがすぐ隣に残り、インストール時のコピーもそのまま残るので、手で戻す必要があれば使えます。
 
 ## ライセンス
 

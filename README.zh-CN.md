@@ -95,10 +95,14 @@ $EDITOR notify.sh
 ## 卸载
 
 ```bash
-atrm "$(cat ~/.claude/claude-plus/state/at_job)"
-cp ~/.claude/settings.json.claude-plus-install-backup.<时间戳> ~/.claude/settings.json
-rm -rf ~/.claude/claude-plus
+npx @claude-plus/claude-plus uninstall
 ```
+
+或者从源码：`bash install-claude-plus.sh uninstall`。
+
+它直接在当前的 `settings.json` 上修改，只拿掉 Claude Plus 自己加的东西：你原来的 status line 会回来，其他所有设置和 hook 原样保留 —— 包括安装 Claude Plus 之后才加进去的。它排下的任务会被取消，`~/.claude/claude-plus/` 会被删除，你的 `notify.sh` 也在其中。重复执行不会有任何坏处。
+
+卸载前那一刻的 `settings.json` 会留一份副本在旁边，安装时留下的副本也都还在，万一需要手动回退可以用。
 
 ## 许可证
 

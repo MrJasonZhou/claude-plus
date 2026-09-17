@@ -95,10 +95,14 @@ $EDITOR notify.sh
 ## إلغاء التثبيت
 
 ```bash
-atrm "$(cat ~/.claude/claude-plus/state/at_job)"
-cp ~/.claude/settings.json.claude-plus-install-backup.<الطابع الزمني> ~/.claude/settings.json
-rm -rf ~/.claude/claude-plus
+npx @claude-plus/claude-plus uninstall
 ```
+
+أو من نسخة مستنسخة: `bash install-claude-plus.sh uninstall`.
+
+يعدّل ملف `settings.json` الحالي في مكانه ولا يزيل منه إلا ما أضافه Claude Plus: يعود شريط الحالة الخاص بك، وتبقى كل الإعدادات والخطافات الأخرى كما هي تمامًا — بما فيها تلك التي أُضيفت بعد تثبيت Claude Plus. تُلغى مهامه المجدولة ويُحذف `~/.claude/claude-plus/`، ومعه ملف `notify.sh` الخاص بك. تشغيله مرة ثانية لا يسبب أي ضرر.
+
+تُحفظ بجانبه نسخة من `settings.json` كما كان قبيل إلغاء التثبيت مباشرة، وكذلك النسخ التي أُنشئت عند التثبيت، تحسبًا لحاجتك يومًا إلى الرجوع يدويًا.
 
 ## الرخصة
 

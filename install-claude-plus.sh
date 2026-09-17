@@ -18,13 +18,173 @@ NOTIFY="$BASE/notify.sh"
 SETTINGS="$HOME/.claude/settings.json"
 MARKER="/claude-plus/claude-plus.sh"
 
-# Check the commands we depend on
-for cmd in claude jq at atq atrm flock date timeout tmux; do
-    if ! command -v "$cmd" >/dev/null 2>&1; then
-        echo "Required command not found: $cmd" >&2
-        exit 1
+usage() {
+    cat >&2 <<USAGE
+Usage: $(basename "$0") [install|uninstall]
+
+  install     Install or upgrade Claude Plus (the default)
+  uninstall   Remove Claude Plus and leave the rest of settings.json alone
+USAGE
+}
+
+require() {
+    local cmd
+
+    for cmd in "$@"; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            echo "Required command not found: $cmd" >&2
+            exit 1
+        fi
+    done
+}
+
+# The one definition of "what Claude Plus added to settings.json", used by
+# both upgrade and uninstall so the two can never disagree.
+#
+# It works on the current file rather than restoring a backup, because the
+# user and other tools may have changed settings.json since we installed.
+# The statusLine wrapper turns back into the user's own command (or goes away
+# if there was none), hooks that run our script are dropped, and a hook group
+# or event is only removed when taking ours out left it empty. Everything
+# else passes through untouched.
+STRIP_FILTER='
+def ours: type == "string" and contains($marker);
+
+def has_ours_group:
+    type == "object" and (.hooks | type) == "array" and any(.hooks[]; .command | ours);
+
+def has_ours_event:
+    type == "array" and any(.[]; has_ours_group);
+
+if (.statusLine | type) == "object" and (.statusLine.command | ours) then
+    # Never restore a command that is itself our wrapper, or it would call itself
+    if $orig != "" and ($orig | ours | not) then
+        .statusLine.command = $orig
+    else
+        del(.statusLine)
+    end
+else
+    .
+end
+|
+if (.hooks | type) == "object" and any(.hooks[]; has_ours_event) then
+    .hooks |= with_entries(
+        if (.value | has_ours_event) then
+            .value |= map(
+                if has_ours_group then
+                    .hooks |= map(select((.command | ours) | not))
+                    | if (.hooks | length) == 0 then empty else . end
+                else
+                    .
+                end
+            )
+            | if (.value | length) == 0 then empty else . end
+        else
+            .
+        end
+    )
+    | if (.hooks | length) == 0 then del(.hooks) else . end
+else
+    .
+end
+'
+
+is_installed() {
+    [[ -e "$BASE" ]] && return 0
+
+    [[ -f "$SETTINGS" ]] &&
+        jq -e --arg marker "$MARKER" --arg orig "" ". as \$in | ($STRIP_FILTER) != \$in" "$SETTINGS" >/dev/null 2>&1
+}
+
+# Take Claude Plus off this machine: our entries in the current settings.json,
+# our at jobs, and our directory. Each step touches only what is ours and does
+# nothing when that part is already gone, so this is safe to run again, and
+# safe to run on an installation that is only half there.
+remove_installation() {
+    if [[ -f "$SETTINGS" ]]; then
+        local orig="" tmp
+
+        if [[ -s "$ORIG" ]]; then
+            orig="$(cat "$ORIG")"
+        fi
+
+        tmp="$(mktemp)"
+        jq --arg marker "$MARKER" --arg orig "$orig" "$STRIP_FILTER" "$SETTINGS" > "$tmp"
+
+        # Rewrite only when there was something of ours to take out
+        if cmp -s <(jq -S . "$SETTINGS") <(jq -S . "$tmp"); then
+            rm -f "$tmp"
+        else
+            mv "$tmp" "$SETTINGS"
+        fi
     fi
-done
+
+    if command -v atq >/dev/null 2>&1; then
+        local job_id
+
+        while read -r job_id _; do
+            [[ -n "$job_id" ]] || continue
+
+            # Read the job from a file descriptor, not a pipe: grep -q quitting
+            # early would SIGPIPE `at` and pipefail would call the match a miss
+            if grep -Fq "$MARKER" < <(at -c "$job_id" 2>/dev/null); then
+                atrm "$job_id" >/dev/null 2>&1 || true
+            fi
+        done < <(atq 2>/dev/null || true)
+    fi
+
+    rm -rf "$BASE"
+}
+
+ACTION="${1:-install}"
+
+case "$ACTION" in
+    install|uninstall)
+        ;;
+    -h|--help|help)
+        usage
+        exit 0
+        ;;
+    *)
+        usage
+        exit 2
+        ;;
+esac
+
+require jq
+
+# Refuse to touch a settings.json that is not valid JSON
+if [[ -f "$SETTINGS" ]] && ! jq empty "$SETTINGS" 2>/dev/null; then
+    echo "$SETTINGS is not valid JSON. Fix it first; Claude Plus will not edit it." >&2
+    exit 1
+fi
+
+STAMP="$(date +%Y%m%d-%H%M%S)"
+
+if [[ "$ACTION" == "uninstall" ]]; then
+    if ! is_installed; then
+        # Sweep anyway: an interrupted removal can leave an at job behind
+        remove_installation
+        echo "Claude Plus is not installed; nothing to remove."
+        exit 0
+    fi
+
+    SETTINGS_BACKUP=""
+    if [[ -f "$SETTINGS" ]]; then
+        SETTINGS_BACKUP="$SETTINGS.claude-plus-uninstall-backup.$STAMP"
+        cp -p "$SETTINGS" "$SETTINGS_BACKUP"
+    fi
+
+    remove_installation
+
+    echo "Claude Plus uninstalled."
+    if [[ -n "$SETTINGS_BACKUP" ]]; then
+        echo "settings.json was edited in place. Its state just before: $SETTINGS_BACKUP"
+    fi
+    exit 0
+fi
+
+require claude at atq atrm flock date timeout tmux
 
 mkdir -p "$HOME/.claude"
 
@@ -33,18 +193,8 @@ if [[ ! -f "$SETTINGS" ]]; then
     printf '{}\n' > "$SETTINGS"
 fi
 
-# Refuse to touch a settings.json that is not valid JSON
-jq empty "$SETTINGS"
-
-STAMP="$(date +%Y%m%d-%H%M%S)"
 SETTINGS_BACKUP="$SETTINGS.claude-plus-install-backup.$STAMP"
 cp -p "$SETTINGS" "$SETTINGS_BACKUP"
-
-PRESERVED_ORIG=""
-if [[ -s "$ORIG" ]]; then
-    PRESERVED_ORIG="$(mktemp)"
-    cp -p "$ORIG" "$PRESERVED_ORIG"
-fi
 
 # The notify script carries the user's own credentials, so a reinstall
 # must not throw it away along with the rest of the directory
@@ -55,89 +205,18 @@ if [[ -f "$NOTIFY" ]]; then
 fi
 
 cleanup_temp() {
-    if [[ -n "$PRESERVED_ORIG" && -f "$PRESERVED_ORIG" ]]; then
-        rm -f "$PRESERVED_ORIG"
-    fi
-
     if [[ -n "$PRESERVED_NOTIFY" && -f "$PRESERVED_NOTIFY" ]]; then
         rm -f "$PRESERVED_NOTIFY"
     fi
 }
 trap cleanup_temp EXIT
 
-remove_old_installation() {
-    local found=0
-
-    if [[ -e "$BASE" ]]; then
-        found=1
-    fi
-
-    if jq -e --arg marker "$MARKER" '
-        ((.statusLine.command? // "") | contains($marker))
-        or
-        ([.hooks? // {} | to_entries[]? | .value[]? | .hooks[]? | (.command? // "") | contains($marker)] | any)
-    ' "$SETTINGS" >/dev/null 2>&1; then
-        found=1
-    fi
-
-    if (( found == 0 )); then
-        return 0
-    fi
-
+if is_installed; then
     echo "Existing installation detected. Removing it first..."
+fi
 
-    # Only remove at jobs this tool registered
-    while read -r job_id _; do
-        [[ -n "$job_id" ]] || continue
-        if at -c "$job_id" 2>/dev/null | grep -Fq "$MARKER"; then
-            atrm "$job_id" >/dev/null 2>&1 || true
-        fi
-    done < <(atq 2>/dev/null || true)
-
-    # Strip only our own entries rather than restoring the whole backup
-    local tmp
-    tmp="$(mktemp)"
-
-    jq --arg marker "$MARKER" '
-        def clean_hook_groups:
-            if type != "array" then .
-            else
-                map(
-                    .hooks = (
-                        (.hooks // [])
-                        | map(
-                            select(
-                                (((.command // "") | contains($marker)) | not)
-                            )
-                        )
-                    )
-                )
-                | map(select(((.hooks // []) | length) > 0))
-            end;
-
-        if ((.statusLine.command? // "") | contains($marker)) then
-            del(.statusLine)
-        else
-            .
-        end
-        |
-        if (.hooks? | type) == "object" then
-            .hooks |= with_entries(.value |= clean_hook_groups)
-            | .hooks |= with_entries(select((.value | type) != "array" or (.value | length) > 0))
-            | if (.hooks | length) == 0 then del(.hooks) else . end
-        else
-            .
-        end
-    ' "$SETTINGS" > "$tmp"
-
-    jq empty "$tmp"
-    mv "$tmp" "$SETTINGS"
-
-    # Remove the script and its state
-    rm -rf "$BASE"
-}
-
-remove_old_installation
+# Upgrade goes through exactly the same removal as uninstall
+remove_installation
 
 mkdir -p "$BASE" "$STATE" "$PENDING" "$STALE"
 
@@ -159,14 +238,12 @@ if compgen -G "$SCRIPT_DIR/notify/*.sample" >/dev/null; then
     cp -p "$SCRIPT_DIR/notify"/*.sample "$BASE/notify/"
 fi
 
+# Removal has already turned any old wrapper back into the user's own
+# command, so whatever statusLine is there now is the one to wrap
 CURRENT_STATUS_COMMAND="$(jq -r '.statusLine.command // empty' "$SETTINGS")"
 
-# A statusLine already in settings.json wins over anything saved earlier
-if [[ -n "$CURRENT_STATUS_COMMAND" ]]; then
+if [[ -n "$CURRENT_STATUS_COMMAND" && "$CURRENT_STATUS_COMMAND" != *"$MARKER"* ]]; then
     printf '%s\n' "$CURRENT_STATUS_COMMAND" > "$ORIG"
-elif [[ -n "$PRESERVED_ORIG" && -s "$PRESERVED_ORIG" ]]; then
-    # Carry a saved statusLine over as the wrapped command, not back into settings
-    cp -p "$PRESERVED_ORIG" "$ORIG"
 fi
 
 cat > "$BIN" <<'CLAUDE_PLUS'
@@ -180,7 +257,7 @@ cat > "$BIN" <<'CLAUDE_PLUS'
 # option) any later version. See the LICENSE file for details.
 set -u
 
-VERSION="2.2.1"
+VERSION="2.3.0"
 
 BASE="$HOME/.claude/claude-plus"
 STATE="$BASE/state"
@@ -867,22 +944,13 @@ bash -n "$BIN"
 
 TMP_SETTINGS="$(mktemp)"
 
+# Removal above has already taken out every entry of ours, so this only adds
 jq \
-    --arg marker "$MARKER" \
     --arg status_cmd "$BIN statusline" \
     --arg rate_cmd "$BIN rate-limit" \
     --arg prompt_cmd "$BIN prompt-submit" \
     --arg end_cmd "$BIN session-end" \
     '
-    def clean_wk:
-        map(
-            .hooks = (
-                (.hooks // [])
-                | map(select(((.command // "") | contains($marker)) | not))
-            )
-        )
-        | map(select((.hooks | length) > 0));
-
     .statusLine = (
         (.statusLine // {})
         + {
@@ -894,7 +962,7 @@ jq \
     .hooks = (.hooks // {})
     |
     .hooks.StopFailure = (
-        ((.hooks.StopFailure // []) | clean_wk)
+        (.hooks.StopFailure // [])
         + [
             {
                 "matcher": "rate_limit",
@@ -909,7 +977,7 @@ jq \
     )
     |
     .hooks.UserPromptSubmit = (
-        ((.hooks.UserPromptSubmit // []) | clean_wk)
+        (.hooks.UserPromptSubmit // [])
         + [
             {
                 "hooks": [
@@ -923,7 +991,7 @@ jq \
     )
     |
     .hooks.SessionEnd = (
-        ((.hooks.SessionEnd // []) | clean_wk)
+        (.hooks.SessionEnd // [])
         + [
             {
                 "hooks": [

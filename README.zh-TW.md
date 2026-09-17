@@ -95,10 +95,14 @@ $EDITOR notify.sh
 ## 解除安裝
 
 ```bash
-atrm "$(cat ~/.claude/claude-plus/state/at_job)"
-cp ~/.claude/settings.json.claude-plus-install-backup.<時間戳記> ~/.claude/settings.json
-rm -rf ~/.claude/claude-plus
+npx @claude-plus/claude-plus uninstall
 ```
+
+或者從原始碼：`bash install-claude-plus.sh uninstall`。
+
+它直接在目前的 `settings.json` 上修改，只拿掉 Claude Plus 自己加的東西：你原本的 status line 會回來，其他所有設定和 hook 原樣保留 —— 包括安裝 Claude Plus 之後才加進去的。它排下的工作會被取消，`~/.claude/claude-plus/` 會被刪除，你的 `notify.sh` 也在其中。重複執行不會有任何壞處。
+
+解除安裝前那一刻的 `settings.json` 會留一份副本在旁邊，安裝時留下的副本也都還在，萬一需要手動回退可以用。
 
 ## 授權條款
 

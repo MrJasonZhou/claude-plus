@@ -95,10 +95,14 @@ Sta tutto sotto `~/.claude/claude-plus/`:
 ## Disinstallazione
 
 ```bash
-atrm "$(cat ~/.claude/claude-plus/state/at_job)"
-cp ~/.claude/settings.json.claude-plus-install-backup.<timestamp> ~/.claude/settings.json
-rm -rf ~/.claude/claude-plus
+npx @claude-plus/claude-plus uninstall
 ```
+
+Oppure da un clone: `bash install-claude-plus.sh uninstall`.
+
+Modifica sul posto il tuo `settings.json` attuale e toglie solo ciò che Claude Plus ha aggiunto: la tua status line torna com'era, e ogni altra impostazione e hook resta esattamente com'è — compresi quelli aggiunti dopo aver installato Claude Plus. I suoi job pianificati vengono annullati e `~/.claude/claude-plus/` viene eliminato, insieme al tuo `notify.sh`. Eseguirla una seconda volta non fa alcun danno.
+
+Una copia di `settings.json` di subito prima della disinstallazione resta lì accanto, così come le copie fatte all'installazione, nel caso ti serva mai tornare indietro a mano.
 
 ## Licenza
 
