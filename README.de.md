@@ -24,7 +24,7 @@ Fortsetzen heißt, in das Terminal zu tippen, in dem Sie gearbeitet haben — de
 
 ## Voraussetzungen
 
-`claude`, `jq`, `at` (mit laufendem `atd`), `flock`, `timeout`, `tmux`, GNU `date`.
+Linux mit `claude`, `jq`, `at` (mit laufendem `atd`), `flock`, `timeout`, `tmux`, GNU `date`.
 
 ```bash
 sudo systemctl enable --now atd
@@ -44,7 +44,7 @@ cd claude-plus
 bash install-claude-plus.sh
 ```
 
-Der Installer übernimmt Ihre Status Line und fügt eigene Hooks hinzu; Ihre bisherige Status Line bleibt erhalten und fremde Hooks bleiben unangetastet. `settings.json` wird zuvor gesichert, und ein erneuter Lauf ist ein sauberes Upgrade statt einer zweiten Installation.
+Der Installer übernimmt Ihre Status Line und fügt eigene Hooks hinzu; Ihre bisherige Status Line bleibt erhalten und fremde Hooks bleiben unangetastet. `settings.json` wird zuvor gesichert, und ein erneuter Lauf ist ein sauberes Upgrade statt einer zweiten Installation. Ein Upgrade übernimmt, was gerade läuft: Sitzungen, die auf Fortsetzung warten, den nächsten geplanten Lauf und Ihren Benachrichtiger.
 
 ## Verwendung
 

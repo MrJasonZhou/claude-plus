@@ -24,7 +24,7 @@ Rate limits themselves are never announced. They are routine, the resume handles
 
 ## Requirements
 
-`claude`, `jq`, `at` (with `atd` running), `flock`, `timeout`, `tmux`, GNU `date`.
+Linux, with `claude`, `jq`, `at` (with `atd` running), `flock`, `timeout`, `tmux`, GNU `date`.
 
 ```bash
 sudo systemctl enable --now atd
@@ -44,7 +44,7 @@ cd claude-plus
 bash install-claude-plus.sh
 ```
 
-The installer takes over your status line and adds its own hooks, keeping whatever status line you already had and leaving other tools' hooks untouched. Your `settings.json` is backed up first, and re-running the installer is a clean upgrade rather than a second copy.
+The installer takes over your status line and adds its own hooks, keeping whatever status line you already had and leaving other tools' hooks untouched. Your `settings.json` is backed up first, and re-running the installer is a clean upgrade rather than a second copy. An upgrade carries over whatever is in progress: sessions waiting to resume, the next scheduled run, and your notifier.
 
 ## Usage
 

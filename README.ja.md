@@ -24,7 +24,7 @@ Claude Code が代わりにやってくれない 3 つのことを、あなた�
 
 ## 必要なもの
 
-`claude`、`jq`、`at`（`atd` 起動済み）、`flock`、`timeout`、`tmux`、GNU `date`。
+Linux 上で、`claude`、`jq`、`at`（`atd` 起動済み）、`flock`、`timeout`、`tmux`、GNU `date`。
 
 ```bash
 sudo systemctl enable --now atd
@@ -44,7 +44,7 @@ cd claude-plus
 bash install-claude-plus.sh
 ```
 
-インストーラは statusLine を引き継ぎ、自身のフックを追加します。既存の statusLine はそのまま表示され、他のツールのフックにも手を触れません。`settings.json` は先にバックアップされ、再実行は二重インストールではなくクリーンな更新になります。
+インストーラは statusLine を引き継ぎ、自身のフックを追加します。既存の statusLine はそのまま表示され、他のツールのフックにも手を触れません。`settings.json` は先にバックアップされ、再実行は二重インストールではなくクリーンな更新になります。更新しても進行中のものは引き継がれます。再開待ちのセッション、次に予約された実行、そしてあなたの通知スクリプトです。
 
 ## 使い方
 

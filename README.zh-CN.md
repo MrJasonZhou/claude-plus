@@ -24,7 +24,7 @@ Claude Code 不会替你做的三件事，在你不在键盘前的时候完成�
 
 ## 依赖
 
-`claude`、`jq`、`at`（需运行 `atd`）、`flock`、`timeout`、`tmux`、GNU `date`。
+Linux，并需要 `claude`、`jq`、`at`（需运行 `atd`）、`flock`、`timeout`、`tmux`、GNU `date`。
 
 ```bash
 sudo systemctl enable --now atd
@@ -44,7 +44,7 @@ cd claude-plus
 bash install-claude-plus.sh
 ```
 
-安装脚本会接管你的 status line 并加入自己的 hook，同时保留你原有的 status line，也不动其他工具的 hook。`settings.json` 会先备份；重复执行安装脚本是一次干净的升级，而不是装第二份。
+安装脚本会接管你的 status line 并加入自己的 hook，同时保留你原有的 status line，也不动其他工具的 hook。`settings.json` 会先备份；重复执行安装脚本是一次干净的升级，而不是装第二份。升级会保留正在进行中的一切：等待续跑的会话、下一次排好的任务，以及你的通知脚本。
 
 ## 使用
 

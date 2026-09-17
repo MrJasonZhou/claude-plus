@@ -169,11 +169,13 @@ chain_calls_us() {
 # nothing when that part is already gone, so this is safe to run again, and
 # safe to run on an installation that is only half there.
 #
-# With keep_chain=1, another program's status line still calls our script, so
-# its path and the command it renders stay, as a pass-through, and everything
-# else goes.
+# Settings and at jobs are always cleared. Files are where upgrade and
+# uninstall part ways: names passed as arguments survive inside
+# ~/.claude/claude-plus, and with none the whole directory goes. Uninstall
+# keeps nothing (or only what a pass-through needs); upgrade keeps the runtime
+# state and the user's notifier, then schedules the next run again itself.
 remove_installation() {
-    local keep_chain="${1:-0}"
+    local keep=("$@")
 
     if [[ -f "$SETTINGS" ]]; then
         local orig="" tmp
@@ -207,11 +209,16 @@ remove_installation() {
         done < <(atq 2>/dev/null || true)
     fi
 
-    if (( keep_chain )); then
-        find "$BASE" -mindepth 1 -maxdepth 1 ! -name "$(basename "$ORIG")" -exec rm -rf {} +
-        write_passthrough "$BIN"
-    else
+    if (( ${#keep[@]} == 0 )); then
         rm -rf "$BASE"
+    elif [[ -d "$BASE" ]]; then
+        local name spare=()
+
+        for name in "${keep[@]}"; do
+            spare+=(! -name "$name")
+        done
+
+        find "$BASE" -mindepth 1 -maxdepth 1 "${spare[@]}" -exec rm -rf {} +
     fi
 }
 
@@ -260,7 +267,13 @@ if [[ "$ACTION" == "uninstall" ]]; then
         cp -p "$SETTINGS" "$SETTINGS_BACKUP"
     fi
 
-    remove_installation "$KEEP_CHAIN"
+    if (( KEEP_CHAIN )); then
+        # Leave the path the other program calls, rendering what we used to wrap
+        remove_installation "$(basename "$ORIG")"
+        write_passthrough "$BIN"
+    else
+        remove_installation
+    fi
 
     echo "Claude Plus uninstalled."
     if [[ -n "$SETTINGS_BACKUP" ]]; then
@@ -289,21 +302,6 @@ fi
 SETTINGS_BACKUP="$SETTINGS.claude-plus-install-backup.$STAMP"
 cp -p "$SETTINGS" "$SETTINGS_BACKUP"
 
-# The notify script carries the user's own credentials, so a reinstall
-# must not throw it away along with the rest of the directory
-PRESERVED_NOTIFY=""
-if [[ -f "$NOTIFY" ]]; then
-    PRESERVED_NOTIFY="$(mktemp)"
-    cp -p "$NOTIFY" "$PRESERVED_NOTIFY"
-fi
-
-cleanup_temp() {
-    if [[ -n "$PRESERVED_NOTIFY" && -f "$PRESERVED_NOTIFY" ]]; then
-        rm -f "$PRESERVED_NOTIFY"
-    fi
-}
-trap cleanup_temp EXIT
-
 # If another program has wrapped the status line around ours, stay inside
 # that chain: keep what we render and do not wrap the wrapper
 KEEP_CHAIN=0
@@ -315,15 +313,16 @@ if is_installed; then
     echo "Existing installation detected. Removing it first..."
 fi
 
-# Upgrade goes through exactly the same removal as uninstall
-remove_installation "$KEEP_CHAIN"
+# Upgrade clears settings and at jobs exactly as uninstall does, but keeps
+# what is still running: sessions waiting to resume, reset times, failure and
+# notification state, and the user's notifier (it holds their credentials)
+KEEP=("$(basename "$STATE")" "$(basename "$NOTIFY")")
+if (( KEEP_CHAIN )); then
+    KEEP+=("$(basename "$ORIG")")
+fi
+remove_installation "${KEEP[@]}"
 
 mkdir -p "$BASE" "$STATE" "$PENDING" "$STALE"
-
-# Put the user's notify script back after the directory was cleared
-if [[ -n "$PRESERVED_NOTIFY" && -f "$PRESERVED_NOTIFY" ]]; then
-    cp -p "$PRESERVED_NOTIFY" "$NOTIFY"
-fi
 
 # Install the notifier samples when they are reachable from this script.
 # npx puts a symlink in node_modules/.bin, so resolve that first.
@@ -360,7 +359,7 @@ cat > "$BIN" <<'CLAUDE_PLUS'
 # option) any later version. See the LICENSE file for details.
 set -u
 
-VERSION="2.3.0"
+VERSION="2.3.1"
 
 BASE="$HOME/.claude/claude-plus"
 STATE="$BASE/state"
@@ -377,42 +376,53 @@ log() {
     printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG"
 }
 
-# Hand the event to whatever notifier the user installed. A broken or slow
-# notifier must never take the run down with it.
+# Hand the event to whatever notifier the user installed. Succeeds only when
+# the message actually went out: no notifier configured counts as not sent,
+# so the event is still delivered once one is set up. A broken or slow
+# notifier only fails this call; it never takes the run down with it.
 notify() {
-    [[ -x "$NOTIFY" ]] || return 0
+    [[ -x "$NOTIFY" ]] || return 1
 
-    CP_EVENT="$1" CP_MESSAGE="$2" CP_HOST="$(uname -n)" \
-        timeout 20 "$NOTIFY" >/dev/null 2>&1 ||
-        log "Notify script failed event=$1"
+    if CP_EVENT="$1" CP_MESSAGE="$2" CP_HOST="$(uname -n)" \
+        timeout 20 "$NOTIFY" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    log "Notify script failed event=$1"
+    return 1
 }
 
-# Notify on the way into a state, not on every retry inside it
+# Notify once per stay in a state, where once means delivered once. The flag
+# is written only after a successful send, so a send that failed is tried
+# again on the next retry rather than counted as done.
 notify_once() {
     local flag="$STATE/notified-$1"
 
     [[ -e "$flag" ]] && return 0
-    : > "$flag"
 
-    notify "$2" "$3"
+    if notify "$2" "$3"; then
+        : > "$flag"
+    fi
+    return 0
 }
 
-# Announce the recovery only to those who heard about the problem
+# Announce the recovery only to those who heard about the problem. Their
+# flags stay until the announcement is delivered, so it is retried too.
 notify_recovered() {
-    local key flag cleared=0
+    local key flags=()
 
     for key in auth failing; do
-        flag="$STATE/notified-$key"
-
-        if [[ -e "$flag" ]]; then
-            rm -f "$flag"
-            cleared=1
+        if [[ -e "$STATE/notified-$key" ]]; then
+            flags+=("$STATE/notified-$key")
         fi
     done
 
-    if (( cleared == 1 )); then
-        notify "recovered" "Claude Plus is back to normal; warmups are succeeding again."
+    (( ${#flags[@]} )) || return 0
+
+    if notify "recovered" "Claude Plus is back to normal; warmups are succeeding again."; then
+        rm -f "${flags[@]}"
     fi
+    return 0
 }
 
 job_exists() {
@@ -576,6 +586,26 @@ statusline() {
     fi
 }
 
+# When a process started, in clock ticks since boot. Together with the pid it
+# names one process, even once the pid has been reused.
+process_start() {
+    local stat
+
+    [[ "${1:-}" =~ ^[0-9]+$ ]] || return 0
+    stat="$(cat "/proc/$1/stat" 2>/dev/null)" || return 0
+
+    # Field 22. The command name in field 2 may hold spaces, so cut past ") "
+    stat="${stat##*) }"
+    awk '{print $20}' <<< "$stat"
+}
+
+# The foreground process group of the terminal a pane's first process sits
+# on: in practice the claude the user is running in that pane.
+foreground_pgid() {
+    [[ "${1:-}" =~ ^[0-9]+$ ]] || return 0
+    ps -o tpgid= -p "$1" 2>/dev/null | tr -d ' '
+}
+
 pending_path() {
     local session_id="$1"
     local safe
@@ -627,6 +657,10 @@ rate_limit() {
         return 0
     fi
 
+    local fg_pgid fg_start
+    fg_pgid="$(foreground_pgid "$pane_pid")"
+    fg_start="$(process_start "$fg_pgid")"
+
     local five_reset seven_reset seven_pct file tmp
     five_reset="$(cat "$STATE/five_hour_reset" 2>/dev/null || true)"
     seven_reset="$(cat "$STATE/seven_day_reset" 2>/dev/null || true)"
@@ -645,6 +679,8 @@ rate_limit() {
         --arg pane_index "$pane_index" \
         --arg pane_command "$pane_command" \
         --arg pane_pid "$pane_pid" \
+        --arg fg_pgid "$fg_pgid" \
+        --arg fg_start "$fg_start" \
         --arg five_reset "$five_reset" \
         --argjson hit_at "$now" \
         '{
@@ -658,6 +694,8 @@ rate_limit() {
             pane_index: $pane_index,
             pane_command: $pane_command,
             pane_pid: $pane_pid,
+            fg_pgid: $fg_pgid,
+            fg_start: $fg_start,
             five_hour_reset: $five_reset,
             hit_at: $hit_at,
             resume_attempts: 0
@@ -724,7 +762,8 @@ resume_pending() {
 
     for file in "$PENDING"/*.json; do
         local session_id socket pane expected_session expected_command attempts
-        local current_session current_command tmp
+        local expected_pid expected_fg expected_fg_start
+        local current_session current_command current_pid current_fg tmp
 
         session_id="$(jq -r '.session_id // empty' "$file" 2>/dev/null)"
         socket="$(jq -r '.tmux_socket // empty' "$file" 2>/dev/null)"
@@ -732,11 +771,15 @@ resume_pending() {
         expected_session="$(jq -r '.tmux_session // empty' "$file" 2>/dev/null)"
         expected_command="$(jq -r '.pane_command // empty' "$file" 2>/dev/null)"
         attempts="$(jq -r '.resume_attempts // 0' "$file" 2>/dev/null)"
+        expected_pid="$(jq -r '.pane_pid // empty' "$file" 2>/dev/null)"
+        expected_fg="$(jq -r '.fg_pgid // empty' "$file" 2>/dev/null)"
+        expected_fg_start="$(jq -r '.fg_start // empty' "$file" 2>/dev/null)"
 
         [[ "$attempts" =~ ^[0-9]+$ ]] || attempts=0
 
-        # Give up after two unanswered attempts
+        # Two unanswered attempts: stop trying, and stop listing it as pending
         if (( attempts >= 2 )); then
+            archive_stale "$file" "resume-attempts-exhausted"
             continue
         fi
 
@@ -773,14 +816,45 @@ resume_pending() {
             continue
         fi
 
-        # Count the attempt before sending, so UserPromptSubmit cannot race us
+        # Same name and same command is not proof enough. A restarted tmux
+        # server hands out the same pane ids again, which a changed pane_pid
+        # gives away. A new claude started from the same shell keeps the
+        # shell's pid, but not the foreground process and its start time.
+        # Entries written before these fields existed skip the checks.
+        current_pid="$(
+            tmux -S "$socket" display-message -p -t "$pane" '#{pane_pid}' 2>/dev/null ||
+                true
+        )"
+
+        if [[ -n "$expected_pid" && "$current_pid" != "$expected_pid" ]]; then
+            archive_stale "$file" "pane-process-changed:$expected_pid->$current_pid"
+            continue
+        fi
+
+        if [[ -n "$expected_fg" ]]; then
+            current_fg="$(foreground_pgid "$current_pid")"
+
+            if [[ "$current_fg" != "$expected_fg" ||
+                  "$(process_start "$current_fg")" != "$expected_fg_start" ]]; then
+                archive_stale "$file" "foreground-process-changed:$expected_fg->$current_fg"
+                continue
+            fi
+        fi
+
+        # Count the attempt before sending, so UserPromptSubmit cannot race us.
+        # An attempt that cannot be counted is not sent: nothing else would
+        # stop it being sent again on every check.
         tmp="$file.tmp.$$"
-        jq \
-            --argjson attempts "$((attempts + 1))" \
-            --argjson sent_at "$(date +%s)" \
-            '.resume_attempts = $attempts | .last_resume_sent_at = $sent_at' \
-            "$file" > "$tmp" &&
-            mv "$tmp" "$file"
+        if ! jq \
+                --argjson attempts "$((attempts + 1))" \
+                --argjson sent_at "$(date +%s)" \
+                '.resume_attempts = $attempts | .last_resume_sent_at = $sent_at' \
+                "$file" > "$tmp" ||
+           ! mv "$tmp" "$file"; then
+            rm -f "$tmp"
+            log "Could not record resume attempt; not sending session=$session_id"
+            continue
+        fi
 
         if tmux -S "$socket" send-keys -t "$pane" -l "continue" 2>/dev/null &&
            tmux -S "$socket" send-keys -t "$pane" Enter 2>/dev/null; then
@@ -820,7 +894,6 @@ do_warmup() {
     local started output rc
     started="$(date +%s)"
 
-    set +e
     output="$(
         timeout 180 \
             claude \
@@ -834,7 +907,6 @@ do_warmup() {
             2>&1
     )"
     rc=$?
-    set -e
 
     if (( rc == 0 )); then
         printf '%s\n' "$started" > "$STATE/last_success"
@@ -886,6 +958,18 @@ do_warmup() {
 
     arm_job "$((now + delay))" "warmup-retry"
     return 1
+}
+
+# Put back the run an earlier version had planned, after an upgrade removed
+# its at job. The target was computed then; one already missed runs now.
+reschedule() {
+    local target reason
+
+    target="$(cat "$STATE/at_target" 2>/dev/null || true)"
+    reason="$(cat "$STATE/at_reason" 2>/dev/null || true)"
+
+    [[ "$target" =~ ^[0-9]+$ ]] || return 0
+    arm_job "$target" "${reason:-rescheduled}"
 }
 
 scheduled() {
@@ -1029,6 +1113,9 @@ case "${1:-}" in
     scheduled)
         scheduled
         ;;
+    reschedule)
+        reschedule
+        ;;
     status)
         show_status
         ;;
@@ -1042,7 +1129,7 @@ case "${1:-}" in
         echo "$VERSION"
         ;;
     *)
-        echo "Usage: $0 {statusline|observe|rate-limit|prompt-submit|session-end|warmup|scheduled|status|pending|notify-test|version}" >&2
+        echo "Usage: $0 {statusline|observe|rate-limit|prompt-submit|session-end|warmup|scheduled|reschedule|status|pending|notify-test|version}" >&2
         exit 2
         ;;
 esac
@@ -1124,6 +1211,12 @@ jq \
 
 jq empty "$TMP_SETTINGS"
 mv "$TMP_SETTINGS" "$SETTINGS"
+
+# Removal dropped the old at job; put the run the previous version had
+# planned back on the new one
+if ! "$BIN" reschedule; then
+    echo "Warning: could not schedule the next run; it will be set on the next status line refresh." >&2
+fi
 
 echo
 echo "Claude Plus installed."

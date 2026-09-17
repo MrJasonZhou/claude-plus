@@ -24,7 +24,7 @@ I limiti d'uso in sé non vengono mai annunciati. Sono ordinaria amministrazione
 
 ## Requisiti
 
-`claude`, `jq`, `at` (con `atd` attivo), `flock`, `timeout`, `tmux`, GNU `date`.
+Linux, con `claude`, `jq`, `at` (con `atd` attivo), `flock`, `timeout`, `tmux`, GNU `date`.
 
 ```bash
 sudo systemctl enable --now atd
@@ -44,7 +44,7 @@ cd claude-plus
 bash install-claude-plus.sh
 ```
 
-L'installatore prende in carico la tua status line e aggiunge i propri hook, mantenendo la status line che già avevi e senza toccare gli hook di altri strumenti. Il `settings.json` viene salvato prima, e rieseguire l'installatore è un aggiornamento pulito anziché una seconda copia.
+L'installatore prende in carico la tua status line e aggiunge i propri hook, mantenendo la status line che già avevi e senza toccare gli hook di altri strumenti. Il `settings.json` viene salvato prima, e rieseguire l'installatore è un aggiornamento pulito anziché una seconda copia. Un aggiornamento porta con sé tutto ciò che è in corso: le sessioni in attesa di ripresa, la prossima esecuzione pianificata e il tuo notificatore.
 
 ## Uso
 
