@@ -44,7 +44,7 @@ cd claude-plus
 bash install-claude-plus.sh
 ```
 
-Der Installer übernimmt Ihre Status Line und fügt eigene Hooks hinzu; Ihre bisherige Status Line bleibt erhalten und fremde Hooks bleiben unangetastet. `settings.json` wird zuvor gesichert, und ein erneuter Lauf ist ein sauberes Upgrade statt einer zweiten Installation. Ein Upgrade übernimmt, was gerade läuft: Sitzungen, die auf Fortsetzung warten, den nächsten geplanten Lauf und Ihren Benachrichtiger.
+Der Installer legt sich um Ihre bestehende Status Line, die genau wie bisher angezeigt wird, und fügt eigene Hooks hinzu; fremde Hooks bleiben unangetastet. `settings.json` wird zuvor gesichert, und ein erneuter Lauf ist ein sauberes Upgrade statt einer zweiten Installation. Ein Upgrade übernimmt, was gerade läuft: Sitzungen, die auf Fortsetzung warten, den nächsten geplanten Lauf und Ihren Benachrichtiger.
 
 ## Verwendung
 

@@ -44,7 +44,7 @@ cd claude-plus
 bash install-claude-plus.sh
 ```
 
-The installer takes over your status line and adds its own hooks, keeping whatever status line you already had and leaving other tools' hooks untouched. Your `settings.json` is backed up first, and re-running the installer is a clean upgrade rather than a second copy. An upgrade carries over whatever is in progress: sessions waiting to resume, the next scheduled run, and your notifier.
+The installer wraps your existing status line, which keeps showing exactly as before, and adds its own hooks, leaving other tools' hooks untouched. Your `settings.json` is backed up first, and re-running the installer is a clean upgrade rather than a second copy. An upgrade carries over whatever is in progress: sessions waiting to resume, the next scheduled run, and your notifier.
 
 ## Usage
 

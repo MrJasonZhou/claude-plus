@@ -44,7 +44,7 @@ cd claude-plus
 bash install-claude-plus.sh
 ```
 
-O instalador assume a sua status line e adiciona os próprios hooks, mantendo a status line que você já tinha e sem tocar nos hooks de outras ferramentas. Seu `settings.json` é salvo antes, e rodar o instalador de novo é uma atualização limpa, não uma segunda cópia. Uma atualização preserva o que está em andamento: sessões esperando retomada, a próxima execução agendada e o seu notificador.
+O instalador envolve a sua status line existente, que continua aparecendo exatamente como antes, e adiciona os próprios hooks, sem tocar nos de outras ferramentas. Seu `settings.json` é salvo antes, e rodar o instalador de novo é uma atualização limpa, não uma segunda cópia. Uma atualização preserva o que está em andamento: sessões esperando retomada, a próxima execução agendada e o seu notificador.
 
 ## Uso
 

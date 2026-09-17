@@ -69,6 +69,7 @@ EOF
 # claude: behaviour picked by a file, so a test can change it between runs
 cat > "$FAKES/claude" <<'EOF'
 #!/usr/bin/env bash
+echo run >> "$CP_TEST/claude-runs"
 case "$(cat "$CP_TEST/claude-mode" 2>/dev/null)" in
     auth) echo "OAuth token has expired. Please run /login" >&2; exit 1 ;;
     fail) echo "API Error: Overloaded" >&2; exit 1 ;;
@@ -112,6 +113,14 @@ cat >/dev/null
 printf Y
 EOF
 
+# Same, but slow, so the chain probe stays in place long enough to race with
+cat > "$FAKES/slowreplace" <<'EOF'
+#!/usr/bin/env bash
+cat >/dev/null
+sleep 2
+printf Y
+EOF
+
 chmod +x "$FAKES"/*
 
 # ---------------------------------------------------------------- helpers
@@ -123,7 +132,7 @@ new_home() {
     S="$H/.claude/settings.json"
     BASE="$H/.claude/claude-plus"
     CP="$BASE/claude-plus.sh"
-    rm -f "$QUEUE"/* "$CP_TEST"/claude-mode "$CP_TEST"/notify-*
+    rm -f "$QUEUE"/* "$CP_TEST"/claude-mode "$CP_TEST"/claude-runs "$CP_TEST"/notify-*
 }
 
 in_home() {
@@ -299,6 +308,56 @@ jq --arg c "$CP statusline" '.statusLine.command = $c' "$S" > "$S.t" && mv "$S.t
 render >/dev/null
 rc=$?
 check "hand-made loop terminates"      '[[ $rc == 0 ]]'
+
+# ======================================================================
+section "the chain probe swallows nothing and never outlives the installer"
+
+use_slow_replacement() {
+    new_home "$1"
+    with_cs
+    install_cp >/dev/null
+    jq --arg c "$FAKES/slowreplace" '.statusLine.command = $c' "$S" > "$S.t" && mv "$S.t" "$S"
+    rm -f "$CP_TEST/claude-runs"
+}
+
+wait_for_probe() {
+    local i
+    for i in $(seq 1 60); do
+        # The real script has been swapped out (true of old and new probes)
+        [[ -f "$CP" ]] && ! grep -q "^observe()" "$CP" && return 0
+        sleep 0.05
+    done
+    return 1
+}
+
+use_slow_replacement probe-race
+install_cp uninstall > "$CP_TEST/probe.out" 2>&1 &
+installer=$!
+wait_for_probe
+check "probe is in place for the race"          '[[ $? == 0 ]]'
+cp_run scheduled >/dev/null
+cp_run prompt-submit <<< '{"session_id":"s"}' >/dev/null
+wait "$installer"
+check "scheduled run during probe still ran"    '[[ -s "$CP_TEST/claude-runs" ]]'
+check "hook calls during probe are not a hit"   '[[ $(cat "$CP_TEST/probe.out") != *pass-through* && ! -e "$BASE" ]]'
+
+for sig in HUP TERM INT; do
+    use_slow_replacement "probe-$sig"
+    # Job control gives the background installer its own process group and
+    # keeps SIGINT from being ignored, as it would be from a terminal
+    set -m
+    HOME="$H" PATH="$FAKES:$PATH" bash "$INSTALLER" uninstall >/dev/null 2>&1 &
+    installer=$!
+    set +m
+    wait_for_probe
+    kill -"$sig" "$installer"
+    wait "$installer"
+    rc=$?
+    check "SIG$sig during probe: installer stops"          '[[ $rc != 0 ]]'
+    check "SIG$sig during probe: real script restored"     'grep -q "^observe()" "$CP"'
+    check "SIG$sig during probe: no temporary files left"  '! compgen -G "$BASE/.saved.*" >/dev/null && ! compgen -G "$BASE/.probe.*" >/dev/null'
+    check "SIG$sig during probe: still installed"          'grep -qF "$MARKER" "$S"'
+done
 
 # ======================================================================
 section "upgrade keeps runtime state; uninstall removes it"

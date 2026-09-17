@@ -101,25 +101,19 @@ status_command() {
     jq -r 'if (.statusLine | type) == "object" then .statusLine.command // empty else empty end' "$SETTINGS"
 }
 
-# A stand-in for our script that only renders the status line we used to wrap.
-# Given a flag file it also records that it was called, which is how
-# chain_calls_us() probes; without one it is what uninstall leaves behind.
+# What uninstall leaves at our script's path when another program still calls
+# it: a stand-in that only renders the status line we used to wrap.
 write_passthrough() {
-    local dest="$1" flag="${2:-}" tmp
+    local dest="$1" tmp
 
     tmp="$(mktemp "$BASE/.passthrough.XXXXXX")"
 
     {
         echo '#!/usr/bin/env bash'
-
-        if [[ -n "$flag" ]]; then
-            printf ': > %q\n' "$flag"
-        else
-            echo '# Claude Plus was uninstalled, but another program had wrapped the status'
-            echo '# line around it and still calls this path. This pass-through keeps that'
-            echo '# chain working by rendering the command Claude Plus used to wrap. Run the'
-            echo '# uninstaller again once nothing calls it, and it goes away for good.'
-        fi
+        echo '# Claude Plus was uninstalled, but another program had wrapped the status'
+        echo '# line around it and still calls this path. This pass-through keeps that'
+        echo '# chain working by rendering the command Claude Plus used to wrap. Run the'
+        echo '# uninstaller again once nothing calls it, and it goes away for good.'
 
         # Same loop guard as the real script
         echo '[[ -z "${CLAUDE_PLUS_IN_STATUSLINE:-}" ]] || exit 0'
@@ -145,21 +139,81 @@ PROBE_INPUT='{"hook_event_name":"Status","session_id":"claude-plus-probe","trans
 # script from under a wrapper and its status line breaks; wrap a wrapper that
 # calls us and the two call each other on every refresh. So ask directly:
 # swap our script for a probe, run the command once, and swap it back.
+#
+# Hooks and scheduled runs keep calling our script while the probe is in
+# place. So the probe counts only a statusline call as a hit, and hands every
+# call, that one included, on to the real script: nothing is swallowed, and a
+# hook firing meanwhile cannot pass for a wrapper. The real script goes back
+# however this ends, including HUP (an SSH session dropping mid-install) and
+# TERM, which would otherwise leave the probe in place for good.
+PROBE_DIR=""
+PROBE_SAVED=""
+
+restore_probed_bin() {
+    if [[ -n "$PROBE_SAVED" && -f "$PROBE_SAVED" ]]; then
+        mv -f "$PROBE_SAVED" "$BIN"
+    fi
+
+    if [[ -n "$PROBE_DIR" ]]; then
+        rm -rf "$PROBE_DIR"
+    fi
+
+    # A probe interrupted before it was renamed into place
+    rm -f "$BASE"/.probe.*
+
+    PROBE_SAVED=""
+    PROBE_DIR=""
+}
+
+write_probe() {
+    local tmp
+
+    tmp="$(mktemp "$BASE/.probe.XXXXXX")"
+
+    {
+        echo '#!/usr/bin/env bash'
+        echo '# Temporary: Claude Plus is checking whether another status line program'
+        echo '# calls it. See chain_calls_us() in the installer.'
+        echo 'if [[ "${1:-}" == statusline ]]; then'
+        printf '    : > %q\n' "$PROBE_DIR/called"
+        echo 'fi'
+        # The real script may be moved back while this starts; then use it there
+        echo 'shopt -s execfail'
+        printf 'exec %q "$@"\n' "$PROBE_SAVED"
+        printf 'exec %q "$@"\n' "$BIN"
+    } > "$tmp"
+
+    chmod +x "$tmp"
+    mv "$tmp" "$BIN"
+}
+
 chain_calls_us() {
-    local cmd="$1" probe_dir saved rc=1
+    local cmd="$1" rc=1 saved_traps
 
     [[ -n "$cmd" && "$cmd" != *"$MARKER"* && -f "$BIN" ]] || return 1
 
-    probe_dir="$(mktemp -d)"
-    saved="$(mktemp "$BASE/.saved.XXXXXX")"
-    cp -p "$BIN" "$saved"
+    # Traps first, so nothing below can be left behind. Nothing else in the
+    # installer sets these today; whatever is set comes back afterwards.
+    saved_traps="$(trap -p EXIT HUP INT TERM)"
+    trap restore_probed_bin EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
 
-    write_passthrough "$BIN" "$probe_dir/called"
+    PROBE_DIR="$(mktemp -d)"
+    PROBE_SAVED="$(mktemp "$BASE/.saved.XXXXXX")"
+    cp -p "$BIN" "$PROBE_SAVED"
+
+    write_probe
     printf '%s' "$PROBE_INPUT" | timeout 10 bash -c "$cmd" >/dev/null 2>&1 || true
-    mv "$saved" "$BIN"
 
-    [[ -e "$probe_dir/called" ]] && rc=0
-    rm -rf "$probe_dir"
+    if [[ -e "$PROBE_DIR/called" ]]; then
+        rc=0
+    fi
+
+    restore_probed_bin
+    trap - EXIT HUP INT TERM
+    eval "$saved_traps"
 
     return "$rc"
 }
