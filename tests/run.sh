@@ -457,11 +457,41 @@ install_cp >/dev/null
 echo ok > "$CP_TEST/claude-mode"
 
 # Start a pane whose shell runs $2 in the foreground, standing in for claude
+# Wait for a pane's foreground command to become $2, rather than guessing
+# how long a slow machine needs
+wait_for_command() {
+    local i
+    for i in $(seq 1 100); do
+        [[ "$(tmux -S "$SOCK" display-message -p -t "$1" '#{pane_current_command}' 2>/dev/null)" == "$2" ]] && return 0
+        sleep 0.05
+    done
+    return 1
+}
+
+# Start a pane whose shell runs $2 in the foreground, standing in for claude
 start_pane() {
-    tmux -S "$SOCK" new-session -d -s "$1" "bash --norc --noprofile"
-    sleep 0.3
+    local i
+    for i in $(seq 1 40); do
+        tmux -S "$SOCK" new-session -d -s "$1" "bash --norc --noprofile" 2>/dev/null && break
+        sleep 0.05
+    done
+    wait_for_command "$1" bash
     tmux -S "$SOCK" send-keys -t "$1" "$2" Enter
-    sleep 0.5
+    wait_for_command "$1" "${2%% *}"
+}
+
+# Kill the server and wait for its process to be gone. A server that is still
+# exiting unlinks its socket path on the way out, which would take a newly
+# started server's socket with it.
+stop_tmux() {
+    local pid i
+    pid="$(tmux -S "$SOCK" list-sessions -F '#{pid}' 2>/dev/null | head -1)"
+    tmux -S "$SOCK" kill-server 2>/dev/null
+    [[ -n "$pid" ]] || return 0
+    for i in $(seq 1 100); do
+        kill -0 "$pid" 2>/dev/null || return 0
+        sleep 0.05
+    done
 }
 
 hit_limit() {
@@ -471,8 +501,24 @@ hit_limit() {
         TMUX="$SOCK,0,0" TMUX_PANE="$pane" in_home "$CP" rate-limit
 }
 
+# Something should arrive: poll for it
 got() {
-    grep -qx continue "$CP_TEST/$1" 2>/dev/null
+    local i
+    for i in $(seq 1 60); do
+        grep -qx continue "$CP_TEST/$1" 2>/dev/null && return 0
+        sleep 0.05
+    done
+    return 1
+}
+
+# Nothing should arrive: the only proof is to give it time and look once
+none_got() {
+    local f
+    sleep 1
+    for f in "$@"; do
+        grep -qx continue "$CP_TEST/$f" 2>/dev/null && return 1
+    done
+    return 0
 }
 
 stale_reason() {
@@ -484,7 +530,6 @@ hit_limit s1 r1
 check "limit recorded with process identity" \
     '[[ -n $(jq -r ".fg_pgid // empty" "$BASE/state/pending/s1.json") && -n $(jq -r ".fg_start // empty" "$BASE/state/pending/s1.json") ]]'
 cp_run scheduled >/dev/null
-sleep 0.5
 check "same terminal: continue sent"      'got r1.out'
 check "attempt counted"                   '[[ $(jq .resume_attempts "$BASE/state/pending/s1.json") == 1 ]]'
 
@@ -496,35 +541,32 @@ check "exhausted: no longer listed"       '[[ $(cp_run pending) == "No pending s
 start_pane r2 "cat > $CP_TEST/r2a.out"
 hit_limit s2 r2
 tmux -S "$SOCK" send-keys -t r2 C-c
-sleep 0.3
+wait_for_command r2 bash
 tmux -S "$SOCK" send-keys -t r2 "cat > $CP_TEST/r2b.out" Enter
-sleep 0.5
+wait_for_command r2 cat
 cp_run scheduled >/dev/null
-sleep 0.5
-check "new claude in same shell: not sent" '! got r2b.out && ! got r2a.out'
+check "new claude in same shell: not sent" 'none_got r2a.out r2b.out'
 check "new claude in same shell: archived" '[[ $(stale_reason s2) == foreground-process-changed:* ]]'
 
-tmux -S "$SOCK" kill-server
+stop_tmux
 start_pane work "cat > $CP_TEST/r3a.out"
 hit_limit s3 work
 check "restart case uses a reused pane id" '[[ $(jq -r .tmux_pane "$BASE/state/pending/s3.json") == %0 ]]'
-tmux -S "$SOCK" kill-server
+stop_tmux
 start_pane work "cat > $CP_TEST/r3b.out"
 check "rebuilt pane matches name and command" \
     '[[ $(tmux -S "$SOCK" display-message -p -t work "#{pane_id} #S #{pane_current_command}") == "%0 work cat" ]]'
 cp_run scheduled >/dev/null
-sleep 0.5
-check "restarted tmux server: not sent"   '! got r3b.out'
+check "restarted tmux server: not sent"   'none_got r3b.out'
 check "restarted tmux server: archived"   '[[ $(stale_reason s3) == pane-process-changed:* ]]'
 
 start_pane r4 "cat > $CP_TEST/r4.out"
 hit_limit s4 r4
 jq 'del(.pane_pid, .fg_pgid, .fg_start)' "$BASE/state/pending/s4.json" > "$CP_TEST/t" && mv "$CP_TEST/t" "$BASE/state/pending/s4.json"
 cp_run scheduled >/dev/null
-sleep 0.5
 check "entry from an older version: still resumed" 'got r4.out'
 
-tmux -S "$SOCK" kill-server 2>/dev/null
+stop_tmux
 
 # ======================================================================
 echo
