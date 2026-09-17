@@ -102,6 +102,8 @@ Ou a partir de um clone: `bash install-claude-plus.sh uninstall`.
 
 Ela edita o seu `settings.json` atual no próprio lugar e retira apenas o que o Claude Plus adicionou: sua própria status line volta, e todas as outras configurações e hooks ficam exatamente como estão — inclusive os adicionados depois de instalar o Claude Plus. As tarefas agendadas são canceladas e `~/.claude/claude-plus/` é apagado, junto com o seu `notify.sh`. Rodar de novo não causa nenhum dano.
 
+Se depois outro programa envolveu a sua status line por fora do Claude Plus, desinstalar não o quebra. Fica para trás um pequeno script de repasse para que esse programa continue funcionando, e o desinstalador avisa; rode de novo quando nada mais precisar dele. Uma atualização na mesma situação permanece dentro da cadeia desse programa em vez de envolvê-lo por sua vez.
+
 Uma cópia do `settings.json` de logo antes da desinstalação fica ao lado dele, assim como as cópias feitas na instalação, caso você precise voltar atrás à mão.
 
 ## Licença

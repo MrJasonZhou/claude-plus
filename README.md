@@ -102,6 +102,8 @@ Or from a clone: `bash install-claude-plus.sh uninstall`.
 
 It edits your current `settings.json` in place and takes out only what Claude Plus added: your own status line comes back, and every other setting and hook stays exactly as it is — including ones added after Claude Plus was installed. Its scheduled jobs are cancelled and `~/.claude/claude-plus/` is deleted, your `notify.sh` along with it. Running it a second time does no harm.
 
+If another program has since wrapped your status line around Claude Plus, uninstalling will not break it. A small pass-through is left behind so that program keeps working, and the uninstaller tells you so; run it again once nothing needs it any more. Upgrading in the same situation stays inside that program's chain rather than wrapping it.
+
 A copy of `settings.json` from just before uninstalling is kept next to it, as are the copies made at install time, in case you ever need to go back by hand.
 
 ## License

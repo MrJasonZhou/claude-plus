@@ -102,6 +102,8 @@ npx @claude-plus/claude-plus uninstall
 
 它直接在目前的 `settings.json` 上修改，只拿掉 Claude Plus 自己加的東西：你原本的 status line 會回來，其他所有設定和 hook 原樣保留 —— 包括安裝 Claude Plus 之後才加進去的。它排下的工作會被取消，`~/.claude/claude-plus/` 會被刪除，你的 `notify.sh` 也在其中。重複執行不會有任何壞處。
 
+如果之後有別的程式又把你的 status line 包在了 Claude Plus 外面，解除安裝不會把它弄壞：會留下一個小的透傳指令碼讓那個程式繼續運作，解除安裝時也會告訴你；等不再需要它時再執行一次解除安裝即可。同樣情況下升級，會留在那個程式的鏈裡，而不是反過來把它包起來。
+
 解除安裝前那一刻的 `settings.json` 會留一份副本在旁邊，安裝時留下的副本也都還在，萬一需要手動回退可以用。
 
 ## 授權條款

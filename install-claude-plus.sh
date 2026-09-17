@@ -96,11 +96,85 @@ is_installed() {
         jq -e --arg marker "$MARKER" --arg orig "" ". as \$in | ($STRIP_FILTER) != \$in" "$SETTINGS" >/dev/null 2>&1
 }
 
+status_command() {
+    [[ -f "$SETTINGS" ]] || return 0
+    jq -r 'if (.statusLine | type) == "object" then .statusLine.command // empty else empty end' "$SETTINGS"
+}
+
+# A stand-in for our script that only renders the status line we used to wrap.
+# Given a flag file it also records that it was called, which is how
+# chain_calls_us() probes; without one it is what uninstall leaves behind.
+write_passthrough() {
+    local dest="$1" flag="${2:-}" tmp
+
+    tmp="$(mktemp "$BASE/.passthrough.XXXXXX")"
+
+    {
+        echo '#!/usr/bin/env bash'
+
+        if [[ -n "$flag" ]]; then
+            printf ': > %q\n' "$flag"
+        else
+            echo '# Claude Plus was uninstalled, but another program had wrapped the status'
+            echo '# line around it and still calls this path. This pass-through keeps that'
+            echo '# chain working by rendering the command Claude Plus used to wrap. Run the'
+            echo '# uninstaller again once nothing calls it, and it goes away for good.'
+        fi
+
+        # Same loop guard as the real script
+        echo '[[ -z "${CLAUDE_PLUS_IN_STATUSLINE:-}" ]] || exit 0'
+        echo 'export CLAUDE_PLUS_IN_STATUSLINE=1'
+        printf 'orig=%q\n' "$ORIG"
+        echo 'if [[ "${1:-}" == statusline && -s "$orig" ]]; then'
+        echo '    exec bash -c "$(cat "$orig")"'
+        echo 'fi'
+    } > "$tmp"
+
+    chmod +x "$tmp"
+
+    # Rename over the old file so a copy that is running right now keeps its inode
+    mv "$tmp" "$dest"
+}
+
+PROBE_INPUT='{"hook_event_name":"Status","session_id":"claude-plus-probe","transcript_path":"/dev/null","cwd":"/tmp","model":{"id":"claude","display_name":"Claude"},"workspace":{"current_dir":"/tmp","project_dir":"/tmp"},"version":"0","output_style":{"name":"default"}}'
+
+# Does this status line command end up running our script?
+#
+# settings.json alone cannot tell "another program wrapped us" from "another
+# program replaced us", and guessing wrong is costly both ways: remove our
+# script from under a wrapper and its status line breaks; wrap a wrapper that
+# calls us and the two call each other on every refresh. So ask directly:
+# swap our script for a probe, run the command once, and swap it back.
+chain_calls_us() {
+    local cmd="$1" probe_dir saved rc=1
+
+    [[ -n "$cmd" && "$cmd" != *"$MARKER"* && -f "$BIN" ]] || return 1
+
+    probe_dir="$(mktemp -d)"
+    saved="$(mktemp "$BASE/.saved.XXXXXX")"
+    cp -p "$BIN" "$saved"
+
+    write_passthrough "$BIN" "$probe_dir/called"
+    printf '%s' "$PROBE_INPUT" | timeout 10 bash -c "$cmd" >/dev/null 2>&1 || true
+    mv "$saved" "$BIN"
+
+    [[ -e "$probe_dir/called" ]] && rc=0
+    rm -rf "$probe_dir"
+
+    return "$rc"
+}
+
 # Take Claude Plus off this machine: our entries in the current settings.json,
 # our at jobs, and our directory. Each step touches only what is ours and does
 # nothing when that part is already gone, so this is safe to run again, and
 # safe to run on an installation that is only half there.
+#
+# With keep_chain=1, another program's status line still calls our script, so
+# its path and the command it renders stay, as a pass-through, and everything
+# else goes.
 remove_installation() {
+    local keep_chain="${1:-0}"
+
     if [[ -f "$SETTINGS" ]]; then
         local orig="" tmp
 
@@ -133,7 +207,12 @@ remove_installation() {
         done < <(atq 2>/dev/null || true)
     fi
 
-    rm -rf "$BASE"
+    if (( keep_chain )); then
+        find "$BASE" -mindepth 1 -maxdepth 1 ! -name "$(basename "$ORIG")" -exec rm -rf {} +
+        write_passthrough "$BIN"
+    else
+        rm -rf "$BASE"
+    fi
 }
 
 ACTION="${1:-install}"
@@ -169,17 +248,31 @@ if [[ "$ACTION" == "uninstall" ]]; then
         exit 0
     fi
 
+    CURRENT_STATUS_COMMAND="$(status_command)"
+    KEEP_CHAIN=0
+    if chain_calls_us "$CURRENT_STATUS_COMMAND"; then
+        KEEP_CHAIN=1
+    fi
+
     SETTINGS_BACKUP=""
     if [[ -f "$SETTINGS" ]]; then
         SETTINGS_BACKUP="$SETTINGS.claude-plus-uninstall-backup.$STAMP"
         cp -p "$SETTINGS" "$SETTINGS_BACKUP"
     fi
 
-    remove_installation
+    remove_installation "$KEEP_CHAIN"
 
     echo "Claude Plus uninstalled."
     if [[ -n "$SETTINGS_BACKUP" ]]; then
         echo "settings.json was edited in place. Its state just before: $SETTINGS_BACKUP"
+    fi
+
+    if (( KEEP_CHAIN )); then
+        echo
+        echo "Your status line belongs to another program, which still calls Claude Plus:"
+        echo "  $CURRENT_STATUS_COMMAND"
+        echo "A pass-through was left at $BIN so it keeps working."
+        echo "Once that program stops calling it, run uninstall again to remove it."
     fi
     exit 0
 fi
@@ -211,12 +304,19 @@ cleanup_temp() {
 }
 trap cleanup_temp EXIT
 
+# If another program has wrapped the status line around ours, stay inside
+# that chain: keep what we render and do not wrap the wrapper
+KEEP_CHAIN=0
+if chain_calls_us "$(status_command)"; then
+    KEEP_CHAIN=1
+fi
+
 if is_installed; then
     echo "Existing installation detected. Removing it first..."
 fi
 
 # Upgrade goes through exactly the same removal as uninstall
-remove_installation
+remove_installation "$KEEP_CHAIN"
 
 mkdir -p "$BASE" "$STATE" "$PENDING" "$STALE"
 
@@ -238,12 +338,15 @@ if compgen -G "$SCRIPT_DIR/notify/*.sample" >/dev/null; then
     cp -p "$SCRIPT_DIR/notify"/*.sample "$BASE/notify/"
 fi
 
-# Removal has already turned any old wrapper back into the user's own
-# command, so whatever statusLine is there now is the one to wrap
-CURRENT_STATUS_COMMAND="$(jq -r '.statusLine.command // empty' "$SETTINGS")"
+# Removal has already turned any old wrapper of ours back into the user's own
+# command, so whatever statusLine is there now is the one to wrap. Inside
+# another program's chain, removal kept the command we render instead.
+if (( KEEP_CHAIN == 0 )); then
+    CURRENT_STATUS_COMMAND="$(status_command)"
 
-if [[ -n "$CURRENT_STATUS_COMMAND" && "$CURRENT_STATUS_COMMAND" != *"$MARKER"* ]]; then
-    printf '%s\n' "$CURRENT_STATUS_COMMAND" > "$ORIG"
+    if [[ -n "$CURRENT_STATUS_COMMAND" && "$CURRENT_STATUS_COMMAND" != *"$MARKER"* ]]; then
+        printf '%s\n' "$CURRENT_STATUS_COMMAND" > "$ORIG"
+    fi
 fi
 
 cat > "$BIN" <<'CLAUDE_PLUS'
@@ -433,6 +536,14 @@ observe() {
 }
 
 statusline() {
+    # Two status line programs that each wrap the other would call each other
+    # on every refresh; the inner call stops here instead
+    if [[ -n "${CLAUDE_PLUS_IN_STATUSLINE:-}" ]]; then
+        cat >/dev/null
+        return 0
+    fi
+    export CLAUDE_PLUS_IN_STATUSLINE=1
+
     local input
     input="$(cat)"
 
@@ -946,18 +1057,23 @@ TMP_SETTINGS="$(mktemp)"
 
 # Removal above has already taken out every entry of ours, so this only adds
 jq \
+    --argjson wrap "$( (( KEEP_CHAIN )) && echo false || echo true )" \
     --arg status_cmd "$BIN statusline" \
     --arg rate_cmd "$BIN rate-limit" \
     --arg prompt_cmd "$BIN prompt-submit" \
     --arg end_cmd "$BIN session-end" \
     '
-    .statusLine = (
-        (.statusLine // {})
-        + {
-            "type": "command",
-            "command": $status_cmd
-        }
-    )
+    if $wrap then
+        .statusLine = (
+            (.statusLine // {})
+            + {
+                "type": "command",
+                "command": $status_cmd
+            }
+        )
+    else
+        .
+    end
     |
     .hooks = (.hooks // {})
     |
@@ -1011,6 +1127,9 @@ mv "$TMP_SETTINGS" "$SETTINGS"
 
 echo
 echo "Claude Plus installed."
+if (( KEEP_CHAIN )); then
+    echo "Your status line belongs to another program that calls Claude Plus; it was left as it is."
+fi
 echo "Settings backup : $SETTINGS_BACKUP"
 echo "Main script     : $BIN"
 echo
