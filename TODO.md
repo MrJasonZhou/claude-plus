@@ -1,26 +1,66 @@
 # TODO
 
-Analysis of 2.3.1, 2026-09-17. Nothing here has been started. Code is
-referred to by function name rather than line number, since lines move.
+Analysis of 2.3.1, 2026-09-17, revised the same day after discussion. Nothing
+here has been started. Code is referred to by function name rather than line
+number, since lines move.
 
 ## Features
 
 ### High priority
 
-#### Anchor Keep to a time of day
+#### Let Resume defer to Claude Code's own auto-continue
 
-After a successful warmup, `do_warmup` schedules the next one at
-`started + 5h + 15s`. The chain's phase is therefore set by whenever the user
-last ran out, not by their working hours.
+Claude Code now continues a session by itself when a usage limit resets:
 
-Example: quota runs out at 23:30, resets at 04:30, Keep opens a window at
-04:30, which resets at 09:30. Someone starting work at 09:00 lands in the last
-half hour of an old window, exactly what the README says Keep avoids. The
-README's "open at 06:00, reset at 11:00" example only holds when the phase
-happens to line up.
+- **CLI**: verified in the 2.1.274 binary. `/config` has "Continue automatically
+  at usage limit" (`autoContinueAtUsageLimit`), on by default and stored with
+  the account rather than in `settings.json`. The row only appears when some
+  condition holds, which could not be determined from the binary. While
+  waiting the UI shows `Usage limit reached · continuing automatically at
+  HH:MM · esc to cancel`. It needs no tmux, only a running session.
+- **Desktop**: the session-limit card in the Code tab has an "Auto-continue
+  when limits reset" checkbox ([docs, week 33](https://code.claude.com/docs/en/whats-new/2026-w33)).
+  The weekly-limit card does not offer it.
 
-Direction: a setting such as "open a window at 06:00". A warmup overnight
-whose window would run across the anchor is pushed back to the anchor.
+So Resume is redundant most of the time, and it can collide with the native
+feature: Claude Code continues at the reset, then Claude Plus types
+`continue` + Enter into the pane 15 seconds later. If the native continuation
+does not fire `UserPromptSubmit`, the pending entry is still there, and the
+extra `continue` is queued behind the work already running.
+
+Where Resume still helps, because the native feature does not cover it:
+- Weekly limits: native does not wait for a reset more than 24 hours out.
+- Sleeping through the reset: native drops to "press enter to continue"
+  (`sleptThroughReset`); Claude Plus can press it inside tmux.
+- The setting is off, or not offered on the account.
+- Older Claude Code versions.
+
+**Decision: keep Resume as a fallback, and let the transcript decide.**
+`rate_limit` already records `transcript_path`. The plan:
+
+1. When the limit is hit, also record a baseline: the transcript's line count.
+2. Wait longer after the reset before checking, so the native continuation
+   (which fires with random jitter) goes first.
+3. Before sending, read the transcript past the baseline. Any `type: "user"`
+   entry, or any `type: "assistant"` entry without `isApiErrorMessage: true`,
+   means the session has already moved on. Archive the entry as
+   `session-already-continued` and send nothing. `system` and `attachment`
+   entries do not count.
+4. A session found to have continued has also opened a new window, so that
+   scheduled run should not fall through to a warmup either.
+
+API errors are written as `type: "assistant"` with `isApiErrorMessage: true`
+and an `error` kind (seen locally: `authentication_failed`), so the limit
+error itself is excluded by rule 3.
+
+To verify on a real limit hit before settling the details (no sample exists
+locally yet):
+- The `error` kind a usage limit is written with.
+- How the native continuation is written: `type`, `isMeta`, its text.
+- The jitter range, which sets how long step 2 has to wait.
+- Whether the native continuation fires `UserPromptSubmit`. If it does, the
+  collision above cannot happen, and rule 3 is a second line of defence.
+- Whether hitting the weekly limit writes anything different.
 
 #### Detect a scheduler that is not running
 
@@ -28,22 +68,22 @@ The installer checks that `at` exists, not that `atd` is running. With `atd`
 stopped, `at` still accepts jobs that never run: Keep and Resume silently stop,
 while `status` keeps showing a scheduled time.
 
-Direction:
-- Check at install time that `atd` is running, and warn if not.
-- Show in `status` when a scheduled run last actually executed.
-- On a status line refresh, if `at_target` is several minutes in the past and
-  the job is still queued, send a `scheduler-stalled` alert.
+Plan:
+- At install time, check `systemctl is-active atd`, falling back to
+  `pgrep -x atd` where there is no systemd (WSL, containers). Warn if it is not
+  running; the README already gives the command to start it.
+- `status` shows whether `atd` is running and when a scheduled run last
+  actually executed (`scheduled` writes a timestamp as it starts).
+- On a status line refresh, only once `at_target` is more than five minutes in
+  the past, check whether the job is still queued. If it is, send a
+  `scheduler-stalled` alert through `notify_once`, cleared by `recovered`. This
+  costs nothing while the target is in the future, which matters with a
+  one-second refresh interval.
 
-#### Tell the user when a resume did not happen
-
-Two cases only write to the log:
-- `resume_pending` gives up after two unanswered attempts
-  (`resume-attempts-exhausted`).
-- `rate_limit` sees a session outside tmux and cannot resume it.
-
-The second is the common "I left a plain terminal open" case. An alert such as
-"session hit the limit outside tmux and cannot be resumed; quota resets at
-14:20" tells the user when to come back.
+Accepted limitation: the status line only refreshes while Claude Code is open,
+so a scheduler that stops overnight is noticed the next time Claude Code
+starts. Catching it sooner would take a watchdog independent of `at` (cron or
+a systemd timer), one more dependency. Not worth it for now.
 
 ### Medium priority
 
@@ -53,8 +93,8 @@ Warmups run with `--safe-mode`, so no status line runs and no official
 `resets_at` is seen. While Claude Code is closed, the chain runs on estimates
 alone. If an estimate is early, the warmup lands before the old window has
 reset: it is counted against the old window, no new window opens, yet the
-warmup reports success and the next one is set five hours later. The phase is
-now off by five hours.
+warmup reports success and the next one is set five hours later. The chain is
+then idle for a window it could have used.
 
 Needs research: a way to read current usage or the next reset without the
 interactive UI (see Open questions).
@@ -71,7 +111,8 @@ the installer and the generated script would close this.
 A sent `continue` already opens the new window. The `resume-verification` run
 90 seconds later finds nothing pending and falls through to `do_warmup`,
 spending one more Haiku request and moving the estimate base 90 seconds later.
-Harmless, but wasted.
+Harmless, but wasted. Point 4 of the Resume plan above covers the native case;
+this is the same fix for a continue Claude Plus sent itself.
 
 ### Low priority
 
@@ -80,9 +121,26 @@ Harmless, but wasted.
   weekly quota at 99.5%, under the 99.9% threshold), it is resumed once per
   window. That is at most every five hours, so it cannot run away, but it
   deserves a test.
+- Alert when Resume gives up after two unanswered attempts
+  (`resume-attempts-exhausted`). Less useful now that the native feature
+  handles most sessions.
 - `state/stale/` and `claude-plus.log` are never pruned. Both grow slowly.
 - `--model haiku` is hard-coded. If that alias ever stops working, the only
   signal is the repeated-failure alert.
+
+### Decided against
+
+- **Anchoring Keep to a time of day.** The worry was that the chain's phase is
+  set by when the user last ran out, so work might start in the last half hour
+  of a window. That is not a loss: an overnight window is unused, so that half
+  hour is quota that would otherwise go to waste, and the next full window is
+  only half an hour away. With r hours left in the current window when work
+  starts, a smaller r is better; the worst case, r close to five hours, is the
+  same as having no Keep at all. Whatever the phase, Keep is never worse, so an
+  anchor adds complexity for little gain. This only holds while the chain keeps
+  running, which is what the scheduler check is for.
+- **Alerting on a limit hit outside tmux.** Claude Code's own auto-continue now
+  resumes such sessions, so the alert would mostly report a non-problem.
 
 ## Platforms
 
@@ -126,9 +184,10 @@ GitHub Actions has macOS runners, so the test suite can cover it.
 
 ### Windows (native)
 
-- Resume is not feasible. There is no equivalent of tmux `send-keys`; the only
-  option is synthesising keystrokes into the foreground window, which does
-  nothing on a locked screen and can type into the wrong window. Not safe.
+- Resume is not feasible from outside, as there is no equivalent of tmux
+  `send-keys`; the only option is synthesising keystrokes into the foreground
+  window, which does nothing on a locked screen and can type into the wrong
+  window. Claude Code's own auto-continue now covers most of this anyway.
 - Keep and Alert are possible, but scheduling, locking, process identity and
   the settings path all need different implementations. How Claude Code runs
   hook commands on native Windows needs checking. In practice this is a second
@@ -152,6 +211,9 @@ on each platform, and installing from a git clone would start to require Node.
 
 ## Open questions
 
+- On a real usage limit hit: the `error` kind written to the transcript, how
+  the native continuation is written, its jitter range, and whether it fires
+  `UserPromptSubmit`. See the Resume plan.
 - Can `claude -p` started by launchd or `at` on macOS read Keychain credentials?
 - How does WSL's idle VM shutdown affect `at` jobs in practice?
 - Which shell does Claude Code use for hook commands on native Windows?
@@ -162,9 +224,9 @@ on each platform, and installing from a git clone would start to require Node.
 
 ## Suggested order
 
-1. Anchor Keep to a time of day.
-2. Scheduler self-check and stall alert; alerts for abandoned resumes and
-   limits hit outside tmux.
+1. Scheduler self-check and stall alert. Depends on nothing unknown.
+2. Collect a real limit hit (the log and transcript around it), then make
+   Resume defer to the native auto-continue using the transcript.
 3. `umask 077`.
 4. WSL: verify on a real machine, then document.
 5. Research reading usage without the interactive UI.
