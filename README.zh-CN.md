@@ -48,6 +48,18 @@ bash install-claude-plus.sh
 tail -f ~/.claude/claude-plus/claude-plus.log # 它都做了些什么
 ```
 
+## 在固定时刻开启
+
+默认情况下，上一个窗口一重置就开新的，所以整条链跟着你上次用完额度的时刻走。想把它钉在每天某个时刻：
+
+```bash
+~/.claude/claude-plus/claude-plus.sh anchor 06:00   # 每天 06:00 开
+~/.claude/claude-plus/claude-plus.sh anchor         # 查看当前设置
+~/.claude/claude-plus/claude-plus.sh anchor off     # 恢复成一重置就开
+```
+
+会横跨这个时刻的窗口，改成等到那时再开：本来 03:00 要开的窗口覆盖 03:00-08:00，把 06:00 吞掉了，于是推迟到 06:00 开。这样设定时刻之前的那几个小时就没有窗口 —— 如果你那时候在干活，你自己的第一个请求照常会开一个。
+
 ## 提醒
 
 Claude Plus 平时不出声，只在需要你处理时才响，而且只报告四件事：
@@ -82,6 +94,7 @@ $EDITOR notify.sh
 | `claude-plus.sh` | 脚本本体 |
 | `notify.sh` | 你配置的通知脚本 |
 | `notify/` | 可拷贝的示例 |
+| `anchor` | 你设定的窗口开启时刻（如果设了） |
 | `claude-plus.log` | 它都做了些什么 |
 | `state/` | 内部记账 |
 

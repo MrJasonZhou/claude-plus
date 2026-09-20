@@ -1,9 +1,9 @@
 # TODO
 
 Analysis of 2.3.1, 2026-09-17, revised since. The scheduler check listed here
-first went into 2.4.0, and 3.0.0 removed Resume (see Decided against); nothing
-else has been started. Code is referred to by function name rather than line
-number, since lines move.
+went into 2.4.0, 3.0.0 removed Resume (see Decided against), and 3.1.0 added an
+anchor time after all; nothing else has been started. Code is referred to by
+function name rather than line number, since lines move.
 
 ## Features
 
@@ -53,15 +53,18 @@ generated script would close this.
   either reachable through `/rate-limit-options`, a single keypress, or a
   choice the user made. Not worth tmux, three hooks and the process-identity
   checks that came with it.
-- **Anchoring Keep to a time of day.** The worry was that the chain's phase is
-  set by when the user last ran out, so work might start in the last half hour
-  of a window. That is not a loss: an overnight window is unused, so that half
-  hour is quota that would otherwise go to waste, and the next full window is
-  only half an hour away. With r hours left in the current window when work
+- **Anchoring Keep to a time of day: reconsidered, shipped in 3.1.0.** The
+  argument below still holds - whatever the phase, Keep is never worse than
+  none - so this was left out at first. It went in anyway because a window
+  opening at a time you choose is worth having on its own: `anchor HH:MM` holds
+  back any window that would run across that time, so one opens on it instead.
+  For the record, the original reasoning: the worry was that the chain's phase
+  is set by when the user last ran out, so work might start in the last half
+  hour of a window. That is not a loss: an overnight window is unused, so that
+  half hour is quota that would otherwise go to waste, and the next full window
+  is only half an hour away. With r hours left in the current window when work
   starts, a smaller r is better; the worst case, r close to five hours, is the
-  same as having no Keep at all. Whatever the phase, Keep is never worse, so an
-  anchor adds complexity for little gain. This only holds while the chain keeps
-  running, which is what the scheduler check is for.
+  same as having no Keep at all.
 - **A watchdog independent of `at`.** The scheduler check runs on status line
   refreshes, so a scheduler that stops overnight is only noticed the next time
   Claude Code starts. Catching it sooner would take cron or a systemd timer,

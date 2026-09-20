@@ -547,6 +547,99 @@ check "a run clears the stall, says so"     '[[ ! -e "$BASE/state/notified-stall
 check "status shows the last run"           '[[ $(cp_run status) == *"Last run        : 20"* ]]'
 
 # ======================================================================
+section "anchor arithmetic, on fixed dates"
+
+# Run apply_anchor straight from the generated script. In a subshell, since
+# sourcing it would overwrite BASE and friends.
+anchor_cases() {
+    local lib="$CP_TEST/lib.sh"
+    sed -n "/^cat > \"\$BIN\" <<'CLAUDE_PLUS'$/,/^CLAUDE_PLUS$/p" "$INSTALLER" |
+        sed '1d;$d' | sed '/^case "\${1:-}" in$/,$d' > "$lib"
+    HOME="$CP_TEST/home-fn"
+    mkdir -p "$HOME"
+    source "$lib"
+    ANCHOR="$CP_TEST/anchor-fn"
+
+    run() {
+        printf '%s\n' "$2" > "$ANCHOR"
+        printf '%s @ %s|%s|%s\n' "$1" "$2" \
+            "$(date -d "@$(apply_anchor "$(date -d "$1" +%s)")" '+%F %H:%M')" "$3"
+    }
+
+    run "2026-09-21 03:00" "06:00" "2026-09-21 06:00"   # held
+    run "2026-09-21 01:30" "06:00" "2026-09-21 06:00"   # held
+    run "2026-09-21 06:00" "06:00" "2026-09-21 06:00"   # starts on it
+    run "2026-09-21 06:01" "06:00" "2026-09-21 06:01"   # just missed it
+    run "2026-09-21 07:00" "06:00" "2026-09-21 07:00"   # already past
+    run "2026-09-21 23:00" "01:00" "2026-09-22 01:00"   # held over midnight
+    run "2026-09-21 20:00" "01:00" "2026-09-21 20:00"   # anchor is the window end
+    run "2026-09-21 20:01" "01:00" "2026-09-22 01:00"   # a minute inside the end
+    run "2026-09-21 21:00" "00:00" "2026-09-22 00:00"   # midnight anchor, held
+    run "2026-09-21 00:30" "00:00" "2026-09-21 00:30"   # midnight anchor, missed
+    run "2026-09-21 03:00" "nonsense" "2026-09-21 03:00"
+    run "2026-09-21 03:00" "" "2026-09-21 03:00"
+}
+
+while IFS='|' read -r name actual expected; do
+    check "$name -> $expected (got $actual)" '[[ "$actual" == "$expected" ]]'
+done < <(anchor_cases)
+
+# ======================================================================
+section "an anchor time holds a window back instead of running across it"
+
+new_home anchor
+with_cs
+install_cp >/dev/null
+
+# Feed observe a reset time, as a status line refresh would
+observe_reset() {
+    printf '{"rate_limits":{"five_hour":{"resets_at":%s,"used_percentage":10}}}' "$1" | cp_run observe >/dev/null
+}
+# The HH:MM, and the epoch second, of a moment given as an offset from now
+at_hhmm() { date -d "@$(( NOW + $1 ))" '+%H:%M'; }
+at_epoch() { echo $(( (NOW + $1) / 60 * 60 )); }
+
+check "no anchor by default"          '[[ $(cp_run anchor) == "Anchor: not set" ]]'
+check "status says not set"           '[[ $(cp_run status) == *"Anchor          : not set"* ]]'
+
+NOW="$(date +%s)"
+cp_run anchor "$(at_hhmm 7200)" >/dev/null
+check "anchor set and shown"          '[[ $(cat "$BASE/anchor") == $(at_hhmm 7200) && $(cp_run status) == *"Anchor          : $(at_hhmm 7200)"* ]]'
+
+cp_run anchor 25:00 >/dev/null 2>&1
+rc=$?
+check "rejects a bad time"            '[[ $rc == 2 && $(cat "$BASE/anchor") == $(at_hhmm 7200) ]]'
+
+# A window due now would cover the anchor two hours out: hold it back
+observe_reset $(( NOW + 45 ))
+check "anchor inside the window: held" '[[ $(cat "$BASE/state/at_target") == $(at_epoch 7200) && $(cat "$BASE/state/at_reason") == anchor-hold ]]'
+
+# An anchor beyond the end of the window changes nothing
+cp_run anchor "$(at_hhmm 21600)" >/dev/null
+observe_reset $(( NOW + 45 ))
+check "anchor past the window: as planned" '[[ $(cat "$BASE/state/at_target") == $(( NOW + 60 )) && $(cat "$BASE/state/at_reason") == official-five-hour-reset ]]'
+
+# A window starting exactly on the anchor is already aligned. Clear the queue
+# first, or arm_job would keep the previous plan for the very same moment.
+cp_run anchor "$(at_hhmm 7200)" >/dev/null
+rm -f "$QUEUE"/*
+observe_reset $(( $(at_epoch 7200) - 15 ))
+check "window starts on the anchor: kept" '[[ $(cat "$BASE/state/at_target") == $(at_epoch 7200) && $(cat "$BASE/state/at_reason") == official-five-hour-reset ]]'
+
+# Setting an anchor re-plans what is already scheduled
+cp_run anchor off >/dev/null
+observe_reset $(( NOW + 45 ))
+check "cleared: opens as soon as it can" '[[ $(cat "$BASE/state/at_target") == $(( NOW + 60 )) && $(cp_run anchor) == "Anchor: not set" ]]'
+cp_run anchor "$(at_hhmm 7200)" >/dev/null
+check "setting one re-plans the next run" '[[ $(cat "$BASE/state/at_target") == $(at_epoch 7200) && $(cat "$BASE/state/at_reason") == anchor-hold ]]'
+check "only one job of ours is queued"    '[[ $(our_jobs) == 1 ]]'
+
+install_cp >/dev/null
+check "upgrade keeps the anchor"      '[[ $(cat "$BASE/anchor") == $(at_hhmm 7200) ]]'
+install_cp uninstall >/dev/null
+check "uninstall removes it"          '[[ ! -e "$BASE" ]]'
+
+# ======================================================================
 echo
 echo "$PASS passed, $FAIL failed"
 (( FAIL == 0 ))

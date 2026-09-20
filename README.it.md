@@ -48,6 +48,18 @@ Nel quotidiano non c'è nulla da eseguire — lavora da solo. Quando vuoi dare u
 tail -f ~/.claude/claude-plus/claude-plus.log # cosa ha fatto
 ```
 
+## Aprire a un'ora fissa
+
+Per impostazione predefinita una finestra si apre appena la precedente si azzera, quindi la catena segue l'ora in cui hai finito la quota l'ultima volta. Per fissarla a un'ora del giorno:
+
+```bash
+~/.claude/claude-plus/claude-plus.sh anchor 06:00   # apri alle 06:00
+~/.claude/claude-plus/claude-plus.sh anchor         # mostra l'impostazione
+~/.claude/claude-plus/claude-plus.sh anchor off     # torna ad aprire appena possibile
+```
+
+Una finestra che passerebbe sopra quell'ora la aspetta: quella prevista alle 03:00 coprirebbe 03:00-08:00 inghiottendo le 06:00, quindi si apre alle 06:00. Le ore prima restano senza finestra — se lavori in quel momento, la tua prima richiesta ne apre una come sempre.
+
 ## Avvisi
 
 Claude Plus resta in silenzio finché non serve il tuo intervento, e segnala quattro cose:
@@ -82,6 +94,7 @@ Sta tutto sotto `~/.claude/claude-plus/`:
 | `claude-plus.sh` | Lo script stesso |
 | `notify.sh` | Il tuo notificatore, una volta configurato |
 | `notify/` | Esempi da copiare |
+| `anchor` | L'ora a cui si aprono le finestre, se ne hai impostata una |
 | `claude-plus.log` | Cosa ha fatto |
 | `state/` | Contabilità interna |
 

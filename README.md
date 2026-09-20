@@ -48,6 +48,18 @@ Day to day there is nothing to run — it works on its own. When you want to loo
 tail -f ~/.claude/claude-plus/claude-plus.log # what it has been doing
 ```
 
+## Opening at a fixed time
+
+By default a window opens as soon as the last one resets, so the chain follows whenever you last ran out. To pin it to a time of day instead:
+
+```bash
+~/.claude/claude-plus/claude-plus.sh anchor 06:00   # open at 06:00
+~/.claude/claude-plus/claude-plus.sh anchor         # show the setting
+~/.claude/claude-plus/claude-plus.sh anchor off     # back to opening as soon as it can
+```
+
+A window that would run across the anchor waits for it instead: one due at 03:00 would cover 03:00-08:00 and swallow 06:00, so it opens at 06:00. The hours before the anchor are then left without a window — if you work in them, your own first request opens one as usual.
+
 ## Alerts
 
 Claude Plus stays quiet unless something needs you, and tells you about four things:
@@ -82,6 +94,7 @@ Everything lives in `~/.claude/claude-plus/`:
 | `claude-plus.sh` | The script itself |
 | `notify.sh` | Your notifier, once you set one up |
 | `notify/` | Samples to copy from |
+| `anchor` | The time of day windows open at, if you set one |
 | `claude-plus.log` | What it has been doing |
 | `state/` | Internal bookkeeping |
 

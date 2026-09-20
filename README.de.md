@@ -48,6 +48,18 @@ Im Alltag gibt es nichts auszuführen — es arbeitet von selbst. Wenn Sie nachs
 tail -f ~/.claude/claude-plus/claude-plus.log # was es getan hat
 ```
 
+## Zu einer festen Uhrzeit öffnen
+
+Standardmäßig öffnet ein Fenster, sobald das letzte zurückgesetzt wird; die Kette folgt also dem Zeitpunkt, an dem Sie zuletzt nichts mehr hatten. Um sie stattdessen an eine Uhrzeit zu binden:
+
+```bash
+~/.claude/claude-plus/claude-plus.sh anchor 06:00   # um 06:00 öffnen
+~/.claude/claude-plus/claude-plus.sh anchor         # die Einstellung anzeigen
+~/.claude/claude-plus/claude-plus.sh anchor off     # wieder öffnen, sobald es geht
+```
+
+Ein Fenster, das über diese Uhrzeit hinweglaufen würde, wartet stattdessen auf sie: eines, das um 03:00 fällig wäre, deckte 03:00-08:00 ab und verschlänge 06:00, also öffnet es um 06:00. Die Stunden davor bleiben dann ohne Fenster — arbeiten Sie darin, öffnet Ihre eigene erste Anfrage wie gewohnt eines.
+
 ## Benachrichtigungen
 
 Claude Plus bleibt still, solange nichts Ihre Aufmerksamkeit braucht, und meldet vier Dinge:
@@ -82,6 +94,7 @@ Alles liegt unter `~/.claude/claude-plus/`:
 | `claude-plus.sh` | Das Skript selbst |
 | `notify.sh` | Ihr Benachrichtiger, sobald Sie einen einrichten |
 | `notify/` | Vorlagen zum Kopieren |
+| `anchor` | Die Uhrzeit, zu der Fenster öffnen, falls gesetzt |
 | `claude-plus.log` | Was es getan hat |
 | `state/` | Interne Buchführung |
 

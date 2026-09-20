@@ -1,6 +1,6 @@
 {
   "name": "@claude-plus/claude-plus",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Enhancements for Claude Code: keeps the 5-hour usage window open while you are away, and alerts you when it cannot",
   "bin": {
     "claude-plus": "install-claude-plus.sh"

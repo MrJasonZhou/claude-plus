@@ -48,6 +48,18 @@ bash install-claude-plus.sh
 tail -f ~/.claude/claude-plus/claude-plus.log # 何をしてきたか
 ```
 
+## 決まった時刻に開ける
+
+既定では前の窓がリセットされ次第すぐ開くので、連鎖は最後に枠を使い切った時刻に従います。毎日の決まった時刻に固定するには：
+
+```bash
+~/.claude/claude-plus/claude-plus.sh anchor 06:00   # 毎日 06:00 に開ける
+~/.claude/claude-plus/claude-plus.sh anchor         # 現在の設定を表示
+~/.claude/claude-plus/claude-plus.sh anchor off     # すぐ開ける動作に戻す
+```
+
+その時刻をまたいでしまう窓は、代わりにその時刻まで待ちます。03:00 に開く予定の窓は 03:00〜08:00 を覆って 06:00 を飲み込むので、06:00 に開きます。そのぶん時刻の手前の数時間は窓がありません。その時間帯に作業すれば、いつもどおりあなたの最初のリクエストが窓を開けます。
+
 ## 通知
 
 Claude Plus は普段は黙っていて、あなたの対応が要るときだけ知らせます。伝えるのは次の 4 つだけです。
@@ -82,6 +94,7 @@ $EDITOR notify.sh
 | `claude-plus.sh` | スクリプト本体 |
 | `notify.sh` | あなたが用意した通知スクリプト |
 | `notify/` | コピー元の見本 |
+| `anchor` | 設定した窓を開ける時刻（設定していれば） |
 | `claude-plus.log` | 何をしてきたか |
 | `state/` | 内部の記録 |
 

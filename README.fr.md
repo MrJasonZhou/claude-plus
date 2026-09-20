@@ -48,6 +48,18 @@ Au quotidien, il n'y a rien à lancer — il travaille tout seul. Quand vous vou
 tail -f ~/.claude/claude-plus/claude-plus.log # ce qu'il a fait
 ```
 
+## Ouvrir à une heure fixe
+
+Par défaut, une fenêtre s'ouvre dès que la précédente est réinitialisée : la chaîne suit donc l'heure à laquelle vous avez épuisé votre quota la dernière fois. Pour la fixer à une heure de la journée :
+
+```bash
+~/.claude/claude-plus/claude-plus.sh anchor 06:00   # ouvrir à 06h00
+~/.claude/claude-plus/claude-plus.sh anchor         # afficher le réglage
+~/.claude/claude-plus/claude-plus.sh anchor off     # revenir à une ouverture dès que possible
+```
+
+Une fenêtre qui courrait par-dessus cette heure l'attend : celle prévue à 03h00 couvrirait 03h00-08h00 et avalerait 06h00, elle s'ouvre donc à 06h00. Les heures qui précèdent restent alors sans fenêtre — si vous travaillez à ce moment-là, votre propre première requête en ouvre une comme d'habitude.
+
 ## Alertes
 
 Claude Plus reste silencieux tant que rien ne requiert votre attention, et ne signale que quatre choses :
@@ -82,6 +94,7 @@ Tout se trouve dans `~/.claude/claude-plus/` :
 | `claude-plus.sh` | Le script lui-même |
 | `notify.sh` | Votre notificateur, une fois configuré |
 | `notify/` | Exemples à copier |
+| `anchor` | L'heure d'ouverture des fenêtres, si vous en avez défini une |
 | `claude-plus.log` | Ce qu'il a fait |
 | `state/` | Comptabilité interne |
 

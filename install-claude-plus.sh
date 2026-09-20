@@ -13,6 +13,7 @@ STATE="$BASE/state"
 BIN="$BASE/claude-plus.sh"
 ORIG="$BASE/original-statusline-command"
 NOTIFY="$BASE/notify.sh"
+ANCHOR="$BASE/anchor"
 SETTINGS="$HOME/.claude/settings.json"
 MARKER="/claude-plus/claude-plus.sh"
 
@@ -367,8 +368,8 @@ fi
 
 # Upgrade clears settings and at jobs exactly as uninstall does, but keeps
 # what is still running (reset times, failure and notification state), the
-# user's notifier (it holds their credentials) and the log
-KEEP=("$(basename "$STATE")" "$(basename "$NOTIFY")" "claude-plus.log")
+# user's notifier (it holds their credentials), the anchor and the log
+KEEP=("$(basename "$STATE")" "$(basename "$NOTIFY")" "$(basename "$ANCHOR")" "claude-plus.log")
 if (( KEEP_CHAIN )); then
     KEEP+=("$(basename "$ORIG")")
 fi
@@ -415,12 +416,13 @@ cat > "$BIN" <<'CLAUDE_PLUS'
 # option) any later version. See the LICENSE file for details.
 set -u
 
-VERSION="3.0.0"
+VERSION="3.1.0"
 
 BASE="$HOME/.claude/claude-plus"
 STATE="$BASE/state"
 ORIG="$BASE/original-statusline-command"
 NOTIFY="$BASE/notify.sh"
+ANCHOR="$BASE/anchor"
 LOG="$BASE/claude-plus.log"
 SELF="$BASE/claude-plus.sh"
 
@@ -546,6 +548,67 @@ arm_job() {
     log "Scheduled job=$job_id target=$(date -d "@$target" '+%Y-%m-%d %H:%M:%S') reason=$reason"
 }
 
+WINDOW=$((5 * 3600))
+
+# The first time of day $2 (HH:MM) falls at or after the moment $1
+anchor_after() {
+    local from="$1" anchor="$2" day today
+
+    day="$(date -d "@$from" '+%Y-%m-%d')" || return 1
+    today="$(date -d "$day $anchor" +%s 2>/dev/null)" || return 1
+
+    if (( today >= from )); then
+        printf '%s\n' "$today"
+        return 0
+    fi
+
+    # Tomorrow's date, then the time: `date -d "<date> <time> + 1 day"` reads
+    # the "+ 1" as a UTC offset instead of a day, which silently shifts the hour
+    day="$(date -d "@$((from + 86400))" '+%Y-%m-%d')" || return 1
+    date -d "$day $anchor" +%s 2>/dev/null
+}
+
+# Hold a window back so that none ever runs across the anchor time.
+#
+# A window opened at $1 covers the next five hours. If the anchor falls inside
+# that stretch, opening at the anchor itself is no longer possible, so wait for
+# it instead: a window due at 03:00 would cover 03:00-08:00 and swallow 06:00,
+# so it opens at 06:00. Leaves the target alone when no anchor is set, when the
+# window starts exactly on it, or when the anchor is beyond its end.
+apply_anchor() {
+    local target="$1" anchor next
+
+    anchor="$(cat "$ANCHOR" 2>/dev/null || true)"
+
+    if [[ ! "$anchor" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] ||
+       ! next="$(anchor_after "$target" "$anchor")" ||
+       [[ ! "$next" =~ ^[0-9]+$ ]]; then
+        printf '%s\n' "$target"
+        return 0
+    fi
+
+    if (( next > target && next < target + WINDOW )); then
+        printf '%s\n' "$next"
+    else
+        printf '%s\n' "$target"
+    fi
+}
+
+# Schedule the opening of a new window, honouring the anchor
+arm_window() {
+    local target="$1" reason="$2" anchored
+
+    anchored="$(apply_anchor "$target")"
+
+    if (( anchored != target )); then
+        log "Holding the next window until the anchor at $(date -d "@$anchored" '+%H:%M')"
+        target="$anchored"
+        reason="anchor-hold"
+    fi
+
+    arm_job "$target" "$reason"
+}
+
 is_weekly_limited() {
     local now seven_reset seven_pct
     now="$(date +%s)"
@@ -659,7 +722,7 @@ observe() {
         fi
 
         # Trust the official reset time, plus 15s of slack
-        arm_job "$((five_reset + 15))" "official-five-hour-reset"
+        arm_window "$((five_reset + 15))" "official-five-hour-reset"
     fi
 
     maybe_check_stall
@@ -750,7 +813,7 @@ do_warmup() {
         log "Warmup succeeded output=$(printf '%s' "$output" | tr '\n' ' ' | cut -c1-200)"
 
         # safe-mode runs no statusLine, so estimate the next window from this request
-        arm_job "$((started + 5 * 3600 + 15))" "estimated-next-reset"
+        arm_window "$((started + WINDOW + 15))" "estimated-next-reset"
         return 0
     fi
 
@@ -816,7 +879,7 @@ scheduled() {
 
 show_status() {
     local five_reset at_target at_job last_success reason failures auth_status
-    local last_run scheduler overdue=""
+    local last_run scheduler overdue="" anchor
 
     five_reset="$(cat "$STATE/five_hour_reset" 2>/dev/null || true)"
     at_target="$(cat "$STATE/at_target" 2>/dev/null || true)"
@@ -839,8 +902,11 @@ show_status() {
         *) scheduler="unknown" ;;
     esac
 
+    anchor="$(cat "$ANCHOR" 2>/dev/null || true)"
+
     echo "Version         : $VERSION"
     echo "Scheduler       : $scheduler"
+    echo "Anchor          : ${anchor:-not set}"
 
     if [[ "$five_reset" =~ ^[0-9]+$ ]]; then
         echo "Official reset  : $(date -d "@$five_reset" '+%Y-%m-%d %H:%M:%S')"
@@ -878,6 +944,37 @@ show_status() {
         echo "Last warmup     : $(date -d "@$last_success" '+%Y-%m-%d %H:%M:%S')"
     else
         echo "Last warmup     : none"
+    fi
+}
+
+# Show, set or clear the time of day windows should open at
+set_anchor() {
+    local value="${1:-}" target
+
+    if [[ -z "$value" ]]; then
+        if [[ -s "$ANCHOR" ]]; then
+            echo "Anchor: $(cat "$ANCHOR")"
+        else
+            echo "Anchor: not set"
+        fi
+        return 0
+    fi
+
+    if [[ "$value" == off ]]; then
+        rm -f "$ANCHOR"
+        echo "Anchor cleared; windows open as soon as they can again."
+    elif [[ "$value" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; then
+        printf '%s\n' "$value" > "$ANCHOR"
+        echo "Anchor set to $value; no window will run across it."
+    else
+        echo "Usage: $0 anchor [HH:MM|off]" >&2
+        return 2
+    fi
+
+    # Re-plan what is already scheduled under the new setting
+    target="$(cat "$STATE/at_target" 2>/dev/null || true)"
+    if [[ "$target" =~ ^[0-9]+$ ]]; then
+        arm_window "$target" "$(cat "$STATE/at_reason" 2>/dev/null || echo rescheduled)"
     fi
 }
 
@@ -921,6 +1018,9 @@ case "${1:-}" in
     status)
         show_status
         ;;
+    anchor)
+        set_anchor "${2:-}"
+        ;;
     notify-test)
         notify_test
         ;;
@@ -928,7 +1028,7 @@ case "${1:-}" in
         echo "$VERSION"
         ;;
     *)
-        echo "Usage: $0 {statusline|observe|warmup|scheduled|reschedule|scheduler-check|status|notify-test|version}" >&2
+        echo "Usage: $0 {statusline|observe|warmup|scheduled|reschedule|scheduler-check|status|anchor|notify-test|version}" >&2
         exit 2
         ;;
 esac

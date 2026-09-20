@@ -48,6 +48,18 @@ bash install-claude-plus.sh
 tail -f ~/.claude/claude-plus/claude-plus.log # 它都做了些什麼
 ```
 
+## 在固定時刻開啟
+
+預設情況下，上一個視窗一重設就開新的，所以整條鏈跟著你上次用完額度的時刻走。想把它釘在每天某個時刻：
+
+```bash
+~/.claude/claude-plus/claude-plus.sh anchor 06:00   # 每天 06:00 開
+~/.claude/claude-plus/claude-plus.sh anchor         # 查看目前設定
+~/.claude/claude-plus/claude-plus.sh anchor off     # 恢復成一重設就開
+```
+
+會橫跨這個時刻的視窗，改成等到那時再開：本來 03:00 要開的視窗覆蓋 03:00-08:00，把 06:00 吞掉了，於是推遲到 06:00 開。這樣設定時刻之前的那幾個小時就沒有視窗 —— 如果你那時候在做事，你自己的第一個請求照常會開一個。
+
 ## 提醒
 
 Claude Plus 平時不出聲，只在需要你處理時才響，而且只報告四件事：
@@ -82,6 +94,7 @@ $EDITOR notify.sh
 | `claude-plus.sh` | 指令碼本體 |
 | `notify.sh` | 你設定的通知指令碼 |
 | `notify/` | 可複製的範例 |
+| `anchor` | 你設定的視窗開啟時刻（如果設了） |
 | `claude-plus.log` | 它都做了些什麼 |
 | `state/` | 內部記帳 |
 
