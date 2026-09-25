@@ -1,8 +1,9 @@
 # TODO
 
 Analysis of 2.3.1, 2026-09-17, revised since. The scheduler check listed here
-went into 2.4.0, 3.0.0 removed Resume (see Decided against), and 3.1.0 added an
-anchor time after all; nothing else has been started. Code is referred to by
+went into 2.4.0, 3.0.0 removed Resume (see Decided against), 3.1.0 added an
+anchor time after all, and 4.0.0 split out the provider layer and added Codex
+and Antigravity; nothing else has been started. Code is referred to by
 function name rather than line number, since lines move.
 
 ## Features
@@ -30,6 +31,13 @@ generated script would close this.
 
 ### Low priority
 
+- No way to turn one agent off without uninstalling. Deleting its file under
+  `providers/` works until the next upgrade rewrites it.
+- Kimi Code and Grok Build are understood but not implemented: Kimi's short
+  window limits the rate of requests rather than metering quota, and Grok has
+  one weekly pool and no short window, so neither has a window worth keeping.
+  Both would still earn `alert` if anyone wants the auth and scheduler
+  warnings for them.
 - `claude-plus.log` is never pruned. It grows slowly.
 - `--model haiku` is hard-coded. If that alias ever stops working, the only
   signal is the repeated-failure alert.
@@ -121,13 +129,15 @@ Recommendation: not now.
 
 ### Groundwork: a platform layer
 
-Before any port, gather the platform-bound calls into a handful of functions
-(time formatting, schedule, cancel jobs, lock, run with timeout, scheduler
-health), keeping Linux behaviour identical under the existing tests. This makes
-the Linux code clearer on its own and is the prerequisite for macOS.
+Half of this is done. 4.0.0 split out the *provider* layer, which separates
+agents from the core; what is still mixed in is the *platform* layer, the
+calls that assume Linux (time formatting, scheduling, locking, timeouts,
+scheduler health). Gathering those into a handful of functions, with Linux
+behaviour identical under the existing tests, is what macOS needs.
 
 The runtime script, a heredoc in the installer, could also ship as its own file
-in the package and be copied into place.
+in the package and be copied into place. With providers it is now several
+heredocs, which makes the case a little stronger.
 
 A rewrite in Node is not recommended for now. It would drop jq and unify JSON
 and subprocess handling, but scheduling, the hardest part, would still depend

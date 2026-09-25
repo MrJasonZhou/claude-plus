@@ -1,7 +1,7 @@
 {
   "name": "@claude-plus/claude-plus",
-  "version": "3.1.0",
-  "description": "Enhancements for Claude Code: keeps the 5-hour usage window open while you are away, and alerts you when it cannot",
+  "version": "4.0.0",
+  "description": "Keeps your coding agent's usage window open while you are away, and alerts you when it cannot. Claude Code, Codex and Antigravity.",
   "bin": {
     "claude-plus": "install-claude-plus.sh"
   },
@@ -14,9 +14,11 @@
   "keywords": [
     "claude",
     "claude-code",
+    "codex",
+    "antigravity",
     "rate-limit",
-    "statusline",
-    "usage-limit"
+    "usage-limit",
+    "statusline"
   ],
   "homepage": "https://github.com/MrJasonZhou/claude-plus#readme",
   "repository": {

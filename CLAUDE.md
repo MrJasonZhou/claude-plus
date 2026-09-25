@@ -14,8 +14,16 @@
 same order, and the language nav row on line 3 differs only in which entry is
 left unlinked.
 
+**Providers are the only place an agent is named.** The core knows a short
+window and a long one, and asks a provider for everything else; see
+`docs/PROVIDERS.md` for the contract. Adding an agent means adding
+`providers/<id>.sh` (written by the installer's heredoc), an observer in the
+installer if it can push readings, and a case in `tests/run.sh`. No core
+function should ever test for a particular id.
+
 **Tests.** `bash tests/run.sh` runs the integration suite in a throwaway
-`HOME` with fake `claude`, `at`, `atq`, `atrm`, `systemctl`, `pgrep` and a
-notifier, so the real at queue and settings are never touched. Run it before committing any change to the installer or the script
-it generates, and add a case when fixing a bug. GitHub Actions runs it on Ubuntu for every
-push.
+`HOME` with fake agents (`claude`, `codex`, `agy`), fake `at`, `atq`, `atrm`,
+`systemctl`, `pgrep` and a notifier, so the real at queue, settings and
+subscriptions are never touched. Run it before committing any change to the
+installer or the script it generates, and add a case when fixing a bug.
+GitHub Actions runs it on Ubuntu for every push.
