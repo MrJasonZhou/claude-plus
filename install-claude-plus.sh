@@ -11,7 +11,9 @@ set -euo pipefail
 BASE="$HOME/.claude/claude-plus"
 STATE="$BASE/state"
 BIN="$BASE/claude-plus.sh"
-ORIG="$BASE/original-statusline-command"
+PROVIDERS="$BASE/providers"
+# The command we wrap belongs to one agent, so it lives with that agent's state
+ORIG="$STATE/claude/original-statusline-command"
 NOTIFY="$BASE/notify.sh"
 ANCHOR="$BASE/anchor"
 SETTINGS="$HOME/.claude/settings.json"
@@ -275,6 +277,40 @@ remove_installation() {
     fi
 }
 
+# Versions before 4.0.0 handled one agent, keeping its state flat in state/
+# and the wrapped command at the top of the directory. Move both into place
+# before anything reads them.
+migrate_to_providers() {
+    local f from to
+
+    [[ -d "$STATE" ]] || return 0
+    [[ -e "$STATE/at_target" || -e "$BASE/original-statusline-command" ]] || return 0
+
+    mkdir -p "$STATE/claude"
+
+    for f in at_job at_target at_reason auth_required failure_count last_run \
+             last_success notified-auth notified-failing schedule.lock warmup.lock; do
+        [[ -e "$STATE/$f" ]] && mv -f "$STATE/$f" "$STATE/claude/$f"
+    done
+
+    # The same numbers, under the names the provider interface uses
+    while read -r from to; do
+        [[ -e "$STATE/$from" ]] && mv -f "$STATE/$from" "$STATE/claude/$to"
+    done <<'RENAMES'
+five_hour_reset resets_at
+five_hour_pct used_percent
+seven_day_reset long_resets_at
+seven_day_pct long_used_percent
+RENAMES
+
+    [[ -e "$BASE/original-statusline-command" ]] &&
+        mv -f "$BASE/original-statusline-command" "$STATE/claude/original-statusline-command"
+
+    return 0
+}
+
+migrate_to_providers
+
 ACTION="${1:-install}"
 
 case "$ACTION" in
@@ -321,8 +357,19 @@ if [[ "$ACTION" == "uninstall" ]]; then
     fi
 
     if (( KEEP_CHAIN )); then
-        # Leave the path the other program calls, rendering what we used to wrap
-        remove_installation "$(basename "$ORIG")"
+        # Leave the path the other program calls, rendering what we used to
+        # wrap. Only that one command survives: everything else goes, and it
+        # comes back afterwards rather than keeping the whole of state/.
+        SAVED_ORIG=""
+        [[ -s "$ORIG" ]] && SAVED_ORIG="$(cat "$ORIG")"
+
+        remove_installation
+
+        if [[ -n "$SAVED_ORIG" ]]; then
+            mkdir -p "$(dirname "$ORIG")"
+            printf '%s\n' "$SAVED_ORIG" > "$ORIG"
+        fi
+
         write_passthrough "$BIN"
     else
         remove_installation
@@ -379,7 +426,7 @@ remove_installation "${KEEP[@]}"
 # now does that on its own, so their queue of sessions has no reader.
 rm -rf "$STATE/pending" "$STATE/stale"
 
-mkdir -p "$BASE" "$STATE"
+mkdir -p "$BASE" "$STATE" "$PROVIDERS" "$(dirname "$ORIG")"
 
 # Install the notifier samples when they are reachable from this script.
 # npx puts a symlink in node_modules/.bin, so resolve that first.
@@ -407,7 +454,7 @@ fi
 
 cat > "$BIN" <<'CLAUDE_PLUS'
 #!/usr/bin/env bash
-# Claude Plus - enhancements for Claude Code
+# Claude Plus - enhancements for coding agents
 # Copyright (C) 2026 Jason Zhou
 #
 # This program is free software: you can redistribute it and/or modify it
@@ -416,21 +463,117 @@ cat > "$BIN" <<'CLAUDE_PLUS'
 # option) any later version. See the LICENSE file for details.
 set -u
 
-VERSION="3.1.0"
+VERSION="4.0.0"
 
 BASE="$HOME/.claude/claude-plus"
 STATE="$BASE/state"
-ORIG="$BASE/original-statusline-command"
+PROVIDERS="$BASE/providers"
 NOTIFY="$BASE/notify.sh"
 ANCHOR="$BASE/anchor"
 LOG="$BASE/claude-plus.log"
 SELF="$BASE/claude-plus.sh"
+
+DEFAULT_WINDOW=18000
+STALL_GRACE=300
 
 mkdir -p "$STATE"
 
 log() {
     printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG"
 }
+
+# ----------------------------------------------------------------- providers
+#
+# One file per agent under providers/, each defining functions prefixed with
+# its id. See docs/PROVIDERS.md for the contract. Nothing below this section
+# knows which agents exist.
+
+for _p in "$PROVIDERS"/*.sh; do
+    [[ -e "$_p" ]] && source "$_p"
+done
+unset _p
+
+provider_ids() {
+    local f
+    shopt -s nullglob
+    for f in "$PROVIDERS"/*.sh; do
+        basename "$f" .sh
+    done
+    shopt -u nullglob
+}
+
+provider_defines() {
+    declare -F "$1_$2" >/dev/null 2>&1
+}
+
+# Call a provider function, falling back to the default where there is one
+provider_call() {
+    local id="$1" fn="$2"
+    shift 2
+
+    if provider_defines "$id" "$fn"; then
+        "${id}_${fn}" "$@"
+    else
+        "default_$fn" "$@"
+    fi
+}
+
+default_label() {
+    printf '%s\n' "unknown"
+}
+
+default_capabilities() {
+    printf 'alert\n'
+}
+
+# Most agents word an expired login much the same way
+default_auth_failed() {
+    grep -Eqi 'login expired|please run /login|log ?in again|authentication_failed|not logged in|unauthorized|oauth[^[:alnum:]]+.*expired'
+}
+
+default_warmup() {
+    return 1
+}
+
+default_parse_limits() {
+    cat >/dev/null
+    printf '{}\n'
+}
+
+provider_can() {
+    provider_call "$1" capabilities 2>/dev/null | tr ' ' '\n' | grep -qx "$2"
+}
+
+# Providers the core should act on: installed here, and known to us
+active_providers() {
+    local id
+    for id in $(provider_ids); do
+        provider_defines "$id" available || continue
+        "${id}_available" 2>/dev/null && printf '%s\n' "$id"
+    done
+}
+
+pstate() {
+    printf '%s\n' "$STATE/$1"
+}
+
+pget() {
+    cat "$STATE/$1/$2" 2>/dev/null || true
+}
+
+pset() {
+    mkdir -p "$STATE/$1"
+    printf '%s\n' "$3" > "$STATE/$1/$2"
+}
+
+# How long a short window lasts for this provider, as last observed
+window_seconds() {
+    local w
+    w="$(pget "$1" window_seconds)"
+    [[ "$w" =~ ^[0-9]+$ ]] && printf '%s\n' "$w" || printf '%s\n' "$DEFAULT_WINDOW"
+}
+
+# ------------------------------------------------------------------- notify
 
 # Hand the event to whatever notifier the user installed. Succeeds only when
 # the message actually went out: no notifier configured counts as not sent,
@@ -450,28 +593,30 @@ notify() {
 
 # Notify once per stay in a state, where once means delivered once. The flag
 # is written only after a successful send, so a send that failed is tried
-# again on the next retry rather than counted as done.
+# again on the next retry rather than counted as done. $1 is the directory
+# holding the flag, so providers keep their own.
 notify_once() {
-    local flag="$STATE/notified-$1"
+    local flag="$1/notified-$2"
 
     [[ -e "$flag" ]] && return 0
+    mkdir -p "$1"
 
-    if notify "$2" "$3"; then
+    if notify "$3" "$4"; then
         : > "$flag"
     fi
     return 0
 }
 
-# Announce a recovery only to those who heard about the problem: $1 is the
-# message, the rest are the notify_once keys it clears. Their flags stay until
-# the announcement is delivered, so it is retried too.
+# Announce a recovery only to those who heard about the problem: $2 is the
+# message, the rest are the keys it clears. Their flags stay until the
+# announcement is delivered, so it is retried too.
 notify_recovered() {
-    local message="$1" key flags=()
-    shift
+    local dir="$1" message="$2" key flags=()
+    shift 2
 
     for key in "$@"; do
-        if [[ -e "$STATE/notified-$key" ]]; then
-            flags+=("$STATE/notified-$key")
+        if [[ -e "$dir/notified-$key" ]]; then
+            flags+=("$dir/notified-$key")
         fi
     done
 
@@ -483,6 +628,8 @@ notify_recovered() {
     return 0
 }
 
+# --------------------------------------------------------------- at jobs
+
 job_exists() {
     local job_id="${1:-}"
 
@@ -493,17 +640,20 @@ job_exists() {
         grep -qx "$job_id"
 }
 
+# Schedule `scheduled <id>` at $2, replacing whatever this provider had
 arm_job() {
-    local target="$1"
-    local reason="${2:-unknown}"
+    local id="$1" target="$2" reason="${3:-unknown}"
+    local dir
+    dir="$(pstate "$id")"
+    mkdir -p "$dir"
 
-    exec 9>"$STATE/schedule.lock"
+    exec 9>"$dir/schedule.lock"
     flock 9
 
     local now old_job old_target
     now="$(date +%s)"
-    old_job="$(cat "$STATE/at_job" 2>/dev/null || true)"
-    old_target="$(cat "$STATE/at_target" 2>/dev/null || true)"
+    old_job="$(pget "$id" at_job)"
+    old_target="$(pget "$id" at_target)"
 
     # A target in the past would never fire; push it a few seconds out
     if (( target <= now )); then
@@ -524,10 +674,10 @@ arm_job() {
     timespec="$(date -d "@$target" '+%Y%m%d%H%M.%S')"
 
     output="$(
-        printf '%q scheduled\n' "$SELF" |
+        printf '%q scheduled %q\n' "$SELF" "$id" |
             LC_ALL=C at -t "$timespec" 2>&1
     )" || {
-        log "Failed to schedule at job: $output"
+        log "[$id] Failed to schedule at job: $output"
         return 1
     }
 
@@ -537,18 +687,18 @@ arm_job() {
     )"
 
     if [[ -z "$job_id" ]]; then
-        log "Could not determine at job id: $output"
+        log "[$id] Could not determine at job id: $output"
         return 1
     fi
 
-    printf '%s\n' "$job_id" > "$STATE/at_job"
-    printf '%s\n' "$target" > "$STATE/at_target"
-    printf '%s\n' "$reason" > "$STATE/at_reason"
+    pset "$id" at_job "$job_id"
+    pset "$id" at_target "$target"
+    pset "$id" at_reason "$reason"
 
-    log "Scheduled job=$job_id target=$(date -d "@$target" '+%Y-%m-%d %H:%M:%S') reason=$reason"
+    log "[$id] Scheduled job=$job_id target=$(date -d "@$target" '+%Y-%m-%d %H:%M:%S') reason=$reason"
 }
 
-WINDOW=$((5 * 3600))
+# --------------------------------------------------------------- the anchor
 
 # The first time of day $2 (HH:MM) falls at or after the moment $1
 anchor_after() {
@@ -570,13 +720,13 @@ anchor_after() {
 
 # Hold a window back so that none ever runs across the anchor time.
 #
-# A window opened at $1 covers the next five hours. If the anchor falls inside
+# A window opened at $2 covers the next $1 seconds. If the anchor falls inside
 # that stretch, opening at the anchor itself is no longer possible, so wait for
 # it instead: a window due at 03:00 would cover 03:00-08:00 and swallow 06:00,
 # so it opens at 06:00. Leaves the target alone when no anchor is set, when the
 # window starts exactly on it, or when the anchor is beyond its end.
 apply_anchor() {
-    local target="$1" anchor next
+    local window="$1" target="$2" anchor next
 
     anchor="$(cat "$ANCHOR" 2>/dev/null || true)"
 
@@ -587,7 +737,7 @@ apply_anchor() {
         return 0
     fi
 
-    if (( next > target && next < target + WINDOW )); then
+    if (( next > target && next < target + window )); then
         printf '%s\n' "$next"
     else
         printf '%s\n' "$target"
@@ -596,31 +746,20 @@ apply_anchor() {
 
 # Schedule the opening of a new window, honouring the anchor
 arm_window() {
-    local target="$1" reason="$2" anchored
+    local id="$1" target="$2" reason="$3" anchored
 
-    anchored="$(apply_anchor "$target")"
+    anchored="$(apply_anchor "$(window_seconds "$id")" "$target")"
 
     if (( anchored != target )); then
-        log "Holding the next window until the anchor at $(date -d "@$anchored" '+%H:%M')"
+        log "[$id] Holding the next window until the anchor at $(date -d "@$anchored" '+%H:%M')"
         target="$anchored"
         reason="anchor-hold"
     fi
 
-    arm_job "$target" "$reason"
+    arm_job "$id" "$target" "$reason"
 }
 
-is_weekly_limited() {
-    local now seven_reset seven_pct
-    now="$(date +%s)"
-    seven_reset="$(cat "$STATE/seven_day_reset" 2>/dev/null || true)"
-    seven_pct="$(cat "$STATE/seven_day_pct" 2>/dev/null || true)"
-
-    [[ "$seven_reset" =~ ^[0-9]+$ ]] || return 1
-    [[ -n "$seven_pct" ]] || return 1
-    (( seven_reset > now )) || return 1
-
-    awk -v p="$seven_pct" 'BEGIN { exit !(p >= 99.9) }'
-}
+# ------------------------------------------------------------ the scheduler
 
 # Is atd running? 0 yes, 1 no, 2 cannot tell. systemd first, then the process
 # itself, for systems without systemd (WSL, containers) or an atd started by hand.
@@ -637,19 +776,17 @@ scheduler_running() {
     return 2
 }
 
-STALL_GRACE=300
-
 # A run well past its time and still queued means atd is not running it.
 #
 # This is called on every status line refresh, which can be every second, so
-# the common case must cost nothing: two comparisons, and out. Only when the
+# the common case must cost nothing: two comparisons, and out. Only when a
 # target is overdue and the last look was a while ago does a background check
 # run, one at a time, so the status line never waits on atq or a notifier, and
 # the log and any notification retry happen at most every STALL_GRACE seconds.
 maybe_check_stall() {
-    local now target last
+    local id="$1" now target last
 
-    target="$(cat "$STATE/at_target" 2>/dev/null || true)"
+    target="$(pget "$id" at_target)"
     [[ "$target" =~ ^[0-9]+$ ]] || return 0
 
     now="$(date +%s)"
@@ -662,73 +799,72 @@ maybe_check_stall() {
     (
         exec 7>"$STATE/stall.lock"
         flock -n 7 || exit 0
-        check_stall "$target"
+        check_stall "$id" "$target"
     ) </dev/null >/dev/null 2>&1 &
 }
 
 check_stall() {
-    local target="$1" job
+    local id="$1" target="$2" job last
 
     # Another refresh may have looked while this one waited for the lock
-    local last
     last="$(cat "$STATE/stall_checked_at" 2>/dev/null || true)"
     [[ "$last" =~ ^[0-9]+$ ]] || last=0
     (( $(date +%s) >= last + STALL_GRACE )) || return 0
     date +%s > "$STATE/stall_checked_at"
 
-    job="$(cat "$STATE/at_job" 2>/dev/null || true)"
+    job="$(pget "$id" at_job)"
     job_exists "$job" || return 0
 
-    log "Scheduled run is overdue and still queued: job=$job target=$(date -d "@$target" '+%Y-%m-%d %H:%M:%S')"
-    notify_once stalled "scheduler-stalled" \
-        "Claude Plus's run scheduled for $(date -d "@$target" '+%H:%M') has not happened, so nothing is being kept or resumed. Is atd running? Start it with: sudo systemctl enable --now atd"
+    log "[$id] Scheduled run is overdue and still queued: job=$job target=$(date -d "@$target" '+%Y-%m-%d %H:%M:%S')"
+    notify_once "$STATE" stalled "scheduler-stalled" \
+        "Claude Plus's run scheduled for $(date -d "@$target" '+%H:%M') has not happened, so nothing is being kept open. Is atd running? Start it with: sudo systemctl enable --now atd"
 }
 
+# ------------------------------------------------------------- observations
+
+# Take one reading from a provider: its own JSON on stdin, normalised through
+# the provider, stored, and the next window scheduled from it.
 observe() {
-    local input
+    local id="$1" input parsed key value reset
+
     input="$(cat)"
+    parsed="$(printf '%s' "$input" | provider_call "$id" parse_limits 2>/dev/null)" || return 0
+    [[ -n "$parsed" ]] || return 0
 
-    local five_reset five_pct seven_reset seven_pct
-    five_reset="$(
-        printf '%s' "$input" |
-            jq -r '.rate_limits.five_hour.resets_at // empty' 2>/dev/null
-    )"
-    five_pct="$(
-        printf '%s' "$input" |
-            jq -r '.rate_limits.five_hour.used_percentage // empty' 2>/dev/null
-    )"
-    seven_reset="$(
-        printf '%s' "$input" |
-            jq -r '.rate_limits.seven_day.resets_at // empty' 2>/dev/null
-    )"
-    seven_pct="$(
-        printf '%s' "$input" |
-            jq -r '.rate_limits.seven_day.used_percentage // empty' 2>/dev/null
-    )"
+    for key in window_seconds used_percent resets_at long_used_percent long_resets_at; do
+        value="$(
+            printf '%s' "$parsed" |
+                jq -r --arg k "$key" '.[$k] // empty' 2>/dev/null
+        )"
+        [[ -n "$value" ]] && pset "$id" "$key" "$value"
+    done
 
-    if [[ "$seven_reset" =~ ^[0-9]+$ ]]; then
-        printf '%s\n' "$seven_reset" > "$STATE/seven_day_reset"
+    reset="$(pget "$id" resets_at)"
+
+    if [[ "$reset" =~ ^[0-9]+$ ]] && provider_can "$id" keep; then
+        # Trust the reported reset time, plus 15s of slack
+        arm_window "$id" "$((reset + 15))" "official-reset"
     fi
 
-    if [[ -n "$seven_pct" ]]; then
-        printf '%s\n' "$seven_pct" > "$STATE/seven_day_pct"
-    fi
-
-    if [[ "$five_reset" =~ ^[0-9]+$ ]]; then
-        printf '%s\n' "$five_reset" > "$STATE/five_hour_reset"
-
-        if [[ -n "$five_pct" ]]; then
-            printf '%s\n' "$five_pct" > "$STATE/five_hour_pct"
-        fi
-
-        # Trust the official reset time, plus 15s of slack
-        arm_window "$((five_reset + 15))" "official-five-hour-reset"
-    fi
-
-    maybe_check_stall
+    maybe_check_stall "$id"
 }
 
+# For providers that cannot push, fetch a reading on demand
+refresh_limits() {
+    local id="$1" native
+
+    provider_defines "$id" pull_limits || return 0
+    native="$(provider_call "$id" pull_limits 2>/dev/null)" || return 0
+    [[ -n "$native" ]] || return 0
+
+    printf '%s' "$native" | observe "$id"
+}
+
+# A status line wrapper: feed the payload to observe, then render whatever the
+# user had before us. The original command lives with the provider's state.
 statusline() {
+    local id="$1" input original orig_file
+
     # Two status line programs that each wrap the other would call each other
     # on every refresh; the inner call stops here instead
     if [[ -n "${CLAUDE_PLUS_IN_STATUSLINE:-}" ]]; then
@@ -737,105 +873,104 @@ statusline() {
     fi
     export CLAUDE_PLUS_IN_STATUSLINE=1
 
-    local input
     input="$(cat)"
+    printf '%s' "$input" | "$SELF" observe "$id" >/dev/null 2>&1 || true
 
-    # Feed the reset times into our own state
-    printf '%s' "$input" | "$SELF" observe >/dev/null 2>&1 || true
+    orig_file="$(pstate "$id")/original-statusline-command"
 
-    # With a wrapped command, render exactly what it renders
-    if [[ -s "$ORIG" ]]; then
-        local original
-        original="$(cat "$ORIG")"
+    if [[ -s "$orig_file" ]]; then
+        original="$(cat "$orig_file")"
         printf '%s' "$input" | bash -c "$original"
         return
     fi
 
     # Only fall back to a minimal line when nothing is wrapped
     local pct reset
-    pct="$(
-        printf '%s' "$input" |
-            jq -r '.rate_limits.five_hour.used_percentage // empty' 2>/dev/null
-    )"
-    reset="$(
-        printf '%s' "$input" |
-            jq -r '.rate_limits.five_hour.resets_at // empty' 2>/dev/null
-    )"
+    pct="$(pget "$id" used_percent)"
+    reset="$(pget "$id" resets_at)"
 
     if [[ "$reset" =~ ^[0-9]+$ ]]; then
-        printf '5h %s%% | reset %s\n' \
-            "${pct:-?}" \
-            "$(date -d "@$reset" '+%H:%M')"
+        printf '%s%% used | resets %s\n' "${pct:-?}" "$(date -d "@$reset" '+%H:%M')"
     fi
 }
 
+# ------------------------------------------------------------------- warmup
+
+# Is the long window (weekly, monthly) full? Then a new short window is no use.
+is_long_limited() {
+    local id="$1" now reset pct
+    now="$(date +%s)"
+    reset="$(pget "$id" long_resets_at)"
+    pct="$(pget "$id" long_used_percent)"
+
+    [[ "$reset" =~ ^[0-9]+$ ]] || return 1
+    [[ -n "$pct" ]] || return 1
+    (( reset > now )) || return 1
+
+    awk -v p="$pct" 'BEGIN { exit !(p >= 99.9) }'
+}
+
 do_warmup() {
-    exec 8>"$STATE/warmup.lock"
+    local id="$1" dir
+    dir="$(pstate "$id")"
+    mkdir -p "$dir"
+
+    exec 8>"$dir/warmup.lock"
 
     # Never let two warmups run at once
     if ! flock -n 8; then
         return 0
     fi
 
-    local now seven_reset
+    local now
     now="$(date +%s)"
-    seven_reset="$(cat "$STATE/seven_day_reset" 2>/dev/null || true)"
 
-    if is_weekly_limited; then
-        log "Seven-day limit reached; waiting until weekly reset"
-        arm_job "$((seven_reset + 15))" "seven-day-reset"
+    if is_long_limited "$id"; then
+        local long_reset
+        long_reset="$(pget "$id" long_resets_at)"
+        log "[$id] Long window is full; waiting for it to reset"
+        arm_job "$id" "$((long_reset + 15))" "long-window-reset"
         return 0
     fi
 
     local started output rc
     started="$(date +%s)"
 
-    output="$(
-        timeout 180 \
-            claude \
-            --safe-mode \
-            -p \
-            --model haiku \
-            --tools "" \
-            --no-session-persistence \
-            --max-turns 1 \
-            'Reply only OK.' \
-            2>&1
-    )"
+    output="$(provider_call "$id" warmup)"
     rc=$?
 
     if (( rc == 0 )); then
-        printf '%s\n' "$started" > "$STATE/last_success"
-        printf '0\n' > "$STATE/failure_count"
-        rm -f "$STATE/auth_required"
-        notify_recovered "Claude Plus is back to normal; warmups are succeeding again." auth failing
+        pset "$id" last_success "$started"
+        pset "$id" failure_count 0
+        rm -f "$dir/auth_required"
+        notify_recovered "$dir" "Claude Plus is back to normal for $(provider_call "$id" label); windows are opening again." auth failing
 
-        log "Warmup succeeded output=$(printf '%s' "$output" | tr '\n' ' ' | cut -c1-200)"
+        log "[$id] Warmup succeeded output=$(printf '%s' "$output" | tr '\n' ' ' | cut -c1-200)"
 
-        # safe-mode runs no statusLine, so estimate the next window from this request
-        arm_window "$((started + WINDOW + 15))" "estimated-next-reset"
+        # A warmup usually reports nothing about limits, so estimate the next
+        # window from this request and let the next reading correct it
+        arm_window "$id" "$((started + $(window_seconds "$id") + 15))" "estimated-next-reset"
         return 0
     fi
 
-    if printf '%s\n' "$output" |
-        grep -Eqi 'login expired|please run /login|authentication_failed|not logged in|oauth[^[:alnum:]]+.*expired'; then
-        printf '%s\n' "$(date +%s)" > "$STATE/auth_required"
-        log "Authentication required; automatic warmup paused output=$(printf '%s' "$output" | tr '\n' ' ' | cut -c1-300)"
+    if printf '%s\n' "$output" | provider_call "$id" auth_failed; then
+        pset "$id" auth_required "$(date +%s)"
+        log "[$id] Authentication required; warmups paused output=$(printf '%s' "$output" | tr '\n' ' ' | cut -c1-300)"
 
-        notify_once auth "auth-required" \
-            "Claude Code is no longer authenticated, so Claude Plus has stopped opening windows. Sign in again with: claude /login"
+        notify_once "$dir" auth "auth-required" \
+            "$(provider_call "$id" label) is no longer authenticated, so Claude Plus has stopped opening windows for it. Sign in again."
 
         # Leave room to recover on its own if the failure was temporary
-        arm_job "$((now + 3600))" "auth-recheck"
+        arm_job "$id" "$((now + 3600))" "auth-recheck"
         return 1
     fi
 
     local failures delay
-    failures="$(cat "$STATE/failure_count" 2>/dev/null || printf '0')"
+    failures="$(pget "$id" failure_count)"
     [[ "$failures" =~ ^[0-9]+$ ]] || failures=0
 
     failures=$((failures + 1))
-    printf '%s\n' "$failures" > "$STATE/failure_count"
+    pset "$id" failure_count "$failures"
 
     case "$failures" in
         1) delay=60 ;;
@@ -844,56 +979,60 @@ do_warmup() {
         *) delay=600 ;;
     esac
 
-    log "Warmup failed rc=$rc retry=${delay}s output=$(printf '%s' "$output" | tr '\n' ' ' | cut -c1-300)"
+    log "[$id] Warmup failed rc=$rc retry=${delay}s output=$(printf '%s' "$output" | tr '\n' ' ' | cut -c1-300)"
 
     # Three failures means the backoff has stretched to minutes; worth a word
     if (( failures >= 3 )); then
-        notify_once failing "warmup-failing" \
-            "Claude Plus has failed $failures warmups in a row and is retrying every ${delay}s. See ~/.claude/claude-plus/claude-plus.log"
+        notify_once "$dir" failing "warmup-failing" \
+            "Claude Plus has failed $failures warmups in a row for $(provider_call "$id" label), and is retrying every ${delay}s. See ~/.claude/claude-plus/claude-plus.log"
     fi
 
-    arm_job "$((now + delay))" "warmup-retry"
+    arm_job "$id" "$((now + delay))" "warmup-retry"
     return 1
 }
+
+# ---------------------------------------------------------------- scheduling
 
 # Put back the run an earlier version had planned, after an upgrade removed
 # its at job. The target was computed then; one already missed runs now.
 reschedule() {
-    local target reason
+    local id target reason
 
-    target="$(cat "$STATE/at_target" 2>/dev/null || true)"
-    reason="$(cat "$STATE/at_reason" 2>/dev/null || true)"
+    for id in $(active_providers); do
+        provider_can "$id" keep || continue
 
-    [[ "$target" =~ ^[0-9]+$ ]] || return 0
-    arm_job "$target" "${reason:-rescheduled}"
+        target="$(pget "$id" at_target)"
+        reason="$(pget "$id" at_reason)"
+
+        if [[ "$target" =~ ^[0-9]+$ ]]; then
+            arm_job "$id" "$target" "${reason:-rescheduled}"
+        else
+            # Nothing planned yet. A provider we can poll starts right away;
+            # one that pushes waits for its first reading.
+            refresh_limits "$id"
+        fi
+    done
 }
 
 scheduled() {
-    # atd ran us, so whatever stall was reported is over
-    printf '%s\n' "$(date +%s)" > "$STATE/last_run"
-    notify_recovered "Claude Plus's scheduled runs are happening again." stalled
+    local id="$1"
 
-    # do_warmup waits out a weekly limit itself
-    do_warmup || true
+    # atd ran us, so whatever stall was reported is over
+    pset "$id" last_run "$(date +%s)"
+    notify_recovered "$STATE" "Claude Plus's scheduled runs are happening again." stalled
+
+    # A provider that cannot push its limits gets read now, so the decision
+    # below and the next estimate start from something current
+    refresh_limits "$id"
+
+    do_warmup "$id" || true
 }
 
+# ------------------------------------------------------------------- status
+
 show_status() {
-    local five_reset at_target at_job last_success reason failures auth_status
-    local last_run scheduler overdue="" anchor
-
-    five_reset="$(cat "$STATE/five_hour_reset" 2>/dev/null || true)"
-    at_target="$(cat "$STATE/at_target" 2>/dev/null || true)"
-    at_job="$(cat "$STATE/at_job" 2>/dev/null || true)"
-    last_success="$(cat "$STATE/last_success" 2>/dev/null || true)"
-    last_run="$(cat "$STATE/last_run" 2>/dev/null || true)"
-    reason="$(cat "$STATE/at_reason" 2>/dev/null || true)"
-    failures="$(cat "$STATE/failure_count" 2>/dev/null || printf '0')"
-
-    if [[ -f "$STATE/auth_required" ]]; then
-        auth_status="RELOGIN MAY BE REQUIRED"
-    else
-        auth_status="OK"
-    fi
+    local scheduler anchor id label dir target reason job last_run last_success
+    local failures pct reset long_pct overdue window
 
     scheduler_running
     case $? in
@@ -908,48 +1047,83 @@ show_status() {
     echo "Scheduler       : $scheduler"
     echo "Anchor          : ${anchor:-not set}"
 
-    if [[ "$five_reset" =~ ^[0-9]+$ ]]; then
-        echo "Official reset  : $(date -d "@$five_reset" '+%Y-%m-%d %H:%M:%S')"
-    else
-        echo "Official reset  : unknown"
-    fi
-
-    if [[ "$at_target" =~ ^[0-9]+$ ]]; then
-        if (( $(date +%s) > at_target + STALL_GRACE )) && job_exists "$at_job"; then
-            overdue=" (OVERDUE, still queued)"
-        fi
-        echo "Scheduled       : $(date -d "@$at_target" '+%Y-%m-%d %H:%M:%S')$overdue"
-    else
-        echo "Scheduled       : none"
-    fi
-
-    echo "at job          : ${at_job:-none}"
-    echo "Reason          : ${reason:-none}"
-    echo "Failures        : $failures"
-    echo "Auth status     : $auth_status"
-
     if [[ -x "$NOTIFY" ]]; then
         echo "Notify          : $NOTIFY"
     else
         echo "Notify          : not configured"
     fi
 
-    if [[ "$last_run" =~ ^[0-9]+$ ]]; then
-        echo "Last run        : $(date -d "@$last_run" '+%Y-%m-%d %H:%M:%S')"
-    else
-        echo "Last run        : none"
-    fi
+    for id in $(active_providers); do
+        label="$(provider_call "$id" label)"
+        dir="$(pstate "$id")"
+        target="$(pget "$id" at_target)"
+        reason="$(pget "$id" at_reason)"
+        job="$(pget "$id" at_job)"
+        last_run="$(pget "$id" last_run)"
+        last_success="$(pget "$id" last_success)"
+        failures="$(pget "$id" failure_count)"
+        pct="$(pget "$id" used_percent)"
+        reset="$(pget "$id" resets_at)"
+        long_pct="$(pget "$id" long_used_percent)"
+        window="$(window_seconds "$id")"
+        overdue=""
 
-    if [[ "$last_success" =~ ^[0-9]+$ ]]; then
-        echo "Last warmup     : $(date -d "@$last_success" '+%Y-%m-%d %H:%M:%S')"
-    else
-        echo "Last warmup     : none"
-    fi
+        echo
+        echo "[$id] $label"
+
+        if ! provider_can "$id" keep; then
+            echo "  Keep          : not supported by this agent"
+        fi
+
+        if [[ "$reset" =~ ^[0-9]+$ ]]; then
+            echo "  Window        : ${pct:-?}% used, $((window / 60))min, resets $(date -d "@$reset" '+%Y-%m-%d %H:%M:%S')"
+        else
+            echo "  Window        : unknown"
+        fi
+
+        [[ -n "$long_pct" ]] && echo "  Long window   : ${long_pct}% used"
+
+        if [[ "$target" =~ ^[0-9]+$ ]]; then
+            if (( $(date +%s) > target + STALL_GRACE )) && job_exists "$job"; then
+                overdue=" (OVERDUE, still queued)"
+            fi
+            echo "  Scheduled     : $(date -d "@$target" '+%Y-%m-%d %H:%M:%S')$overdue"
+            echo "  Reason        : ${reason:-none}   at job: ${job:-none}"
+        else
+            echo "  Scheduled     : none"
+        fi
+
+        echo "  Failures      : ${failures:-0}   auth: $([[ -f "$dir/auth_required" ]] && echo 'RELOGIN MAY BE REQUIRED' || echo OK)"
+
+        if [[ "$last_run" =~ ^[0-9]+$ ]]; then
+            echo "  Last run      : $(date -d "@$last_run" '+%Y-%m-%d %H:%M:%S')"
+        fi
+        if [[ "$last_success" =~ ^[0-9]+$ ]]; then
+            echo "  Last warmup   : $(date -d "@$last_success" '+%Y-%m-%d %H:%M:%S')"
+        fi
+    done
 }
+
+show_providers() {
+    local id
+    shopt -s nullglob
+
+    for id in $(provider_ids); do
+        printf '%-10s %-18s %-12s %s\n' \
+            "$id" \
+            "$(provider_call "$id" label)" \
+            "$(provider_defines "$id" available && { "${id}_available" && echo installed || echo "not found"; })" \
+            "$(provider_call "$id" capabilities)"
+    done
+
+    shopt -u nullglob
+}
+
+# ------------------------------------------------------------------ anchor
 
 # Show, set or clear the time of day windows should open at
 set_anchor() {
-    local value="${1:-}" target
+    local value="${1:-}" id target
 
     if [[ -z "$value" ]]; then
         if [[ -s "$ANCHOR" ]]; then
@@ -972,10 +1146,12 @@ set_anchor() {
     fi
 
     # Re-plan what is already scheduled under the new setting
-    target="$(cat "$STATE/at_target" 2>/dev/null || true)"
-    if [[ "$target" =~ ^[0-9]+$ ]]; then
-        arm_window "$target" "$(cat "$STATE/at_reason" 2>/dev/null || echo rescheduled)"
-    fi
+    for id in $(active_providers); do
+        provider_can "$id" keep || continue
+        target="$(pget "$id" at_target)"
+        [[ "$target" =~ ^[0-9]+$ ]] || continue
+        arm_window "$id" "$target" "$(pget "$id" at_reason || echo rescheduled)"
+    done
 }
 
 notify_test() {
@@ -996,18 +1172,26 @@ notify_test() {
     return "$rc"
 }
 
+# --------------------------------------------------------------------- main
+
+# Subcommands that act on one provider default to the first active one, so
+# that jobs and hooks written by older versions still work.
+default_provider() {
+    active_providers | head -1
+}
+
 case "${1:-}" in
     statusline)
-        statusline
+        statusline "${2:-$(default_provider)}"
         ;;
     observe)
-        observe
+        observe "${2:-$(default_provider)}"
         ;;
     warmup)
-        do_warmup
+        do_warmup "${2:-$(default_provider)}"
         ;;
     scheduled)
-        scheduled
+        scheduled "${2:-$(default_provider)}"
         ;;
     reschedule)
         reschedule
@@ -1017,6 +1201,9 @@ case "${1:-}" in
         ;;
     status)
         show_status
+        ;;
+    providers)
+        show_providers
         ;;
     anchor)
         set_anchor "${2:-}"
@@ -1028,7 +1215,9 @@ case "${1:-}" in
         echo "$VERSION"
         ;;
     *)
-        echo "Usage: $0 {statusline|observe|warmup|scheduled|reschedule|scheduler-check|status|anchor|notify-test|version}" >&2
+        echo "Usage: $0 {statusline|observe|warmup|scheduled} [provider]" >&2
+        echo "       $0 {reschedule|scheduler-check|status|providers|notify-test|version}" >&2
+        echo "       $0 anchor [HH:MM|off]" >&2
         exit 2
         ;;
 esac
@@ -1039,12 +1228,108 @@ chmod +x "$BIN"
 # Make sure the script just generated parses
 bash -n "$BIN"
 
+# One file per agent. See docs/PROVIDERS.md for what these have to answer.
+cat > "$PROVIDERS/claude.sh" <<'PROVIDER_CLAUDE'
+# Claude Code. Its status line hook hands over both windows on every refresh,
+# so this provider pushes: no polling needed.
+claude_label() {
+    printf 'Claude Code\n'
+}
+
+claude_available() {
+    command -v claude >/dev/null 2>&1
+}
+
+claude_capabilities() {
+    printf 'keep alert\n'
+}
+
+# The status line payload, as Claude Code writes it
+claude_parse_limits() {
+    jq -c '{
+        window_seconds: 18000,
+        used_percent: .rate_limits.five_hour.used_percentage,
+        resets_at: .rate_limits.five_hour.resets_at,
+        long_used_percent: .rate_limits.seven_day.used_percentage,
+        long_resets_at: .rate_limits.seven_day.resets_at
+    } | with_entries(select(.value != null))' 2>/dev/null
+}
+
+# The smallest request that still opens a window: one Haiku turn, no tools,
+# nothing written to session history
+claude_warmup() {
+    timeout 180 claude \
+        --safe-mode \
+        -p \
+        --model haiku \
+        --tools "" \
+        --no-session-persistence \
+        --max-turns 1 \
+        'Reply only OK.' \
+        2>&1
+}
+PROVIDER_CLAUDE
+
+cat > "$PROVIDERS/codex.sh" <<'PROVIDER_CODEX'
+# Codex. It has no status line hook to push readings, but it records its
+# limits in every session log, so this provider is polled instead.
+codex_label() {
+    printf 'Codex\n'
+}
+
+codex_available() {
+    command -v codex >/dev/null 2>&1
+}
+
+codex_capabilities() {
+    printf 'keep alert\n'
+}
+
+# primary is the short window, secondary the long one; both carry their own
+# length, so nothing here assumes five hours
+codex_parse_limits() {
+    jq -c '{
+        window_seconds: (if .rate_limits.primary.window_minutes
+                         then .rate_limits.primary.window_minutes * 60 else null end),
+        used_percent: .rate_limits.primary.used_percent,
+        resets_at: .rate_limits.primary.resets_at,
+        long_used_percent: .rate_limits.secondary.used_percent,
+        long_resets_at: .rate_limits.secondary.resets_at
+    } | with_entries(select(.value != null))' 2>/dev/null
+}
+
+# The last limits written to the newest session log. As current as the user's
+# last turn, which is enough: a warmup corrects the estimate afterwards.
+codex_pull_limits() {
+    local newest
+
+    newest="$(ls -t "$HOME"/.codex/sessions/*/*/*/rollout-*.jsonl 2>/dev/null | head -1)"
+    [[ -n "$newest" ]] || return 1
+
+    tac "$newest" |
+        jq -cR 'fromjson? | select(.payload.rate_limits != null) | {rate_limits: .payload.rate_limits}' 2>/dev/null |
+        head -1
+}
+
+codex_warmup() {
+    timeout 180 codex exec \
+        --skip-git-repo-check \
+        -s read-only \
+        'Reply only OK.' \
+        2>&1
+}
+PROVIDER_CODEX
+
+for _provider in "$PROVIDERS"/*.sh; do
+    bash -n "$_provider"
+done
+
 # Removal above has already taken out every entry of ours; the status line
 # wrapper is all Claude Plus adds. Inside another program's chain, not even that.
 if (( KEEP_CHAIN == 0 )); then
     TMP_SETTINGS="$(mktemp)"
 
-    jq --arg status_cmd "$BIN statusline" '
+    jq --arg status_cmd "$BIN statusline claude" '
         .statusLine = (
             (.statusLine // {})
             + {

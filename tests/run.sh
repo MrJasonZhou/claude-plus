@@ -76,6 +76,13 @@ case "$(cat "$CP_TEST/claude-mode" 2>/dev/null)" in
 esac
 EOF
 
+# codex: records its invocation, so a test can check the provider's own command
+cat > "$FAKES/codex" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >> "$CP_TEST/codex-runs"
+echo codex-ok
+EOF
+
 # The user's own status line
 cat > "$FAKES/cs" <<'EOF'
 #!/usr/bin/env bash
@@ -144,7 +151,8 @@ new_home() {
     S="$H/.claude/settings.json"
     BASE="$H/.claude/claude-plus"
     CP="$BASE/claude-plus.sh"
-    rm -f "$QUEUE"/* "$CP_TEST"/claude-mode "$CP_TEST"/claude-runs "$CP_TEST"/notify-*
+    ORIGFILE="$BASE/state/claude/original-statusline-command"
+    rm -f "$QUEUE"/* "$CP_TEST"/claude-mode "$CP_TEST"/claude-runs "$CP_TEST"/codex-runs "$CP_TEST"/notify-*
     echo up > "$CP_TEST/atd"
 }
 
@@ -160,6 +168,13 @@ wait_until() {
 
 in_home() {
     HOME="$H" PATH="$FAKES:$PATH" "$@"
+}
+
+# Write a codex session log carrying limits, the way codex does
+codex_log() {
+    mkdir -p "$H/.codex/sessions/2026/09/25"
+    printf '{"type":"event_msg","payload":{"type":"other"}}\n{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":37,"window_minutes":300,"resets_at":%s},"secondary":{"used_percent":13,"window_minutes":10080,"resets_at":%s}}}}\n' \
+        "$1" "$2" > "$H/.codex/sessions/2026/09/25/rollout-2026-09-25T01-00-00-test.jsonl"
 }
 
 install_cp() {
@@ -216,8 +231,8 @@ cat > "$S" <<EOF
           "UserPromptSubmit":[{"hooks":[{"type":"command","command":"/opt/audit"}]}]}}
 EOF
 install_cp >/dev/null
-check "wraps the status line"      '[[ $(jq -r .statusLine.command "$S") == "$CP statusline" ]]'
-check "saves the original"         '[[ $(cat "$BASE/original-statusline-command") == "$FAKES/cs" ]]'
+check "wraps the status line"      '[[ $(jq -r .statusLine.command "$S") == "$CP statusline claude" ]]'
+check "saves the original"         '[[ $(cat "$ORIGFILE") == "$FAKES/cs" ]]'
 check "keeps statusLine siblings"  '[[ $(jq .statusLine.refreshInterval "$S") == 1 ]]'
 check "adds only the status line"  '[[ $(grep -o "$MARKER" "$S" | wc -l) == 1 ]] && ! jq -e ".hooks.StopFailure" "$S" >/dev/null'
 check "renders through wrapper"    '[[ $(render) == CS ]]'
@@ -237,7 +252,7 @@ make_notifier
 echo "/usr/local/bin/nightly" > "$QUEUE/2"
 
 install_cp >/dev/null
-check "upgrade: original not doubled"  '[[ $(cat "$BASE/original-statusline-command") == "$FAKES/cs" ]]'
+check "upgrade: original not doubled"  '[[ $(cat "$ORIGFILE") == "$FAKES/cs" ]]'
 check "upgrade: later edits survive"   '[[ $(jq -r .env.FOO "$S") == 1 ]]'
 check "upgrade: old resume hooks gone"  '[[ $(grep -o "$MARKER" "$S" | wc -l) == 1 && $(jq -c ".hooks | keys" "$S") == "[\"PreToolUse\",\"SessionEnd\",\"UserPromptSubmit\"]" ]]'
 check "upgrade: user hooks in those events kept" '[[ $(jq -r ".hooks.UserPromptSubmit[0].hooks[0].command, .hooks.SessionEnd[0].hooks[0].command" "$S" | tr "\n" " ") == "/opt/audit /opt/save " ]]'
@@ -315,14 +330,14 @@ check "chain renders"                  '[[ $(render) == "X[CS]" ]]'
 
 out="$(install_cp)"
 check "upgrade: wrapper left alone"    '[[ $(jq -r .statusLine.command "$S") == "$FAKES/xwrap render" ]]'
-check "upgrade: still renders cs"      '[[ $(cat "$BASE/original-statusline-command") == "$FAKES/cs" ]]'
+check "upgrade: still renders cs"      '[[ $(cat "$ORIGFILE") == "$FAKES/cs" ]]'
 check "upgrade: full script"           'grep -q "^observe()" "$CP"'
 check "upgrade: renders, no loop"      '[[ $(render) == "X[CS]" ]]'
 
 out="$(install_cp uninstall)"
 check "uninstall: leaves pass-through" '[[ $out == *pass-through* ]] && grep -q "was uninstalled" "$CP"'
 check "uninstall: chain still renders" '[[ $(render) == "X[CS]" ]]'
-check "uninstall: runtime state gone"  '[[ ! -e "$BASE/state" ]]'
+check "uninstall: runtime state gone"  '[[ ! -e "$BASE/state/claude/at_target" ]] && [[ -s "$ORIGFILE" ]]'
 before="$(md5sum < "$S")"
 install_cp uninstall >/dev/null
 check "uninstall again: still renders" '[[ $(render) == "X[CS]" && $(md5sum < "$S") == "$before" ]]'
@@ -373,7 +388,7 @@ install_cp uninstall > "$CP_TEST/probe.out" 2>&1 &
 installer=$!
 wait_for_probe
 check "probe is in place for the race"          '[[ $? == 0 ]]'
-cp_run scheduled >/dev/null
+cp_run scheduled claude >/dev/null
 cp_run status >/dev/null
 wait "$installer"
 check "scheduled run during probe still ran"    '[[ -s "$CP_TEST/claude-runs" ]]'
@@ -405,31 +420,31 @@ with_cs
 install_cp >/dev/null
 now="$(date +%s)"
 target=$((now + 3600))
-echo $((now + 3585))            > "$BASE/state/five_hour_reset"
-echo 42                          > "$BASE/state/five_hour_pct"
-echo $((now + 86400))           > "$BASE/state/seven_day_reset"
-echo 10                          > "$BASE/state/seven_day_pct"
-echo 2                           > "$BASE/state/failure_count"
-echo "$now"                      > "$BASE/state/last_success"
-: > "$BASE/state/notified-failing"
-echo "$target"                   > "$BASE/state/at_target"
-echo pending-rate-limit          > "$BASE/state/at_reason"
+echo $((now + 3585))            > "$BASE/state/claude/five_hour_reset"
+echo 42                          > "$BASE/state/claude/five_hour_pct"
+echo $((now + 86400))           > "$BASE/state/claude/seven_day_reset"
+echo 10                          > "$BASE/state/claude/seven_day_pct"
+echo 2                           > "$BASE/state/claude/failure_count"
+echo "$now"                      > "$BASE/state/claude/last_success"
+: > "$BASE/state/claude/notified-failing"
+echo "$target"                   > "$BASE/state/claude/at_target"
+echo pending-rate-limit          > "$BASE/state/claude/at_reason"
 echo "$CP scheduled"             > "$QUEUE/7"
-echo 7                           > "$BASE/state/at_job"
+echo 7                           > "$BASE/state/claude/at_job"
 make_notifier
 
 install_cp >/dev/null
-check "reset times kept"           '[[ $(cat "$BASE/state/five_hour_reset") == $((now + 3585)) && $(cat "$BASE/state/seven_day_pct") == 10 ]]'
-check "failure state kept"         '[[ $(cat "$BASE/state/failure_count") == 2 && -e "$BASE/state/notified-failing" ]]'
-check "last success kept"          '[[ $(cat "$BASE/state/last_success") == "$now" ]]'
+check "reset times kept"           '[[ $(cat "$BASE/state/claude/five_hour_reset") == $((now + 3585)) && $(cat "$BASE/state/claude/seven_day_pct") == 10 ]]'
+check "failure state kept"         '[[ $(cat "$BASE/state/claude/failure_count") == 2 && -e "$BASE/state/claude/notified-failing" ]]'
+check "last success kept"          '[[ $(cat "$BASE/state/claude/last_success") == "$now" ]]'
 check "notifier kept"              '[[ -x "$BASE/notify.sh" ]]'
 check "old job replaced"           '[[ ! -e "$QUEUE/7" && $(our_jobs) == 1 ]]'
-check "same target re-armed"       '[[ $(cat "$BASE/state/at_target") == "$target" ]]'
-check "same reason kept"           '[[ $(cat "$BASE/state/at_reason") == pending-rate-limit ]]'
+check "same target re-armed"       '[[ $(cat "$BASE/state/claude/at_target") == "$target" ]]'
+check "same reason kept"           '[[ $(cat "$BASE/state/claude/at_reason") == pending-rate-limit ]]'
 
-echo $((now - 600)) > "$BASE/state/at_target"
+echo $((now - 600)) > "$BASE/state/claude/at_target"
 install_cp >/dev/null
-t="$(cat "$BASE/state/at_target")"
+t="$(cat "$BASE/state/claude/at_target")"
 check "missed target runs now"     '(( t >= now && t <= $(date +%s) + 30 )) && [[ $(our_jobs) == 1 ]]'
 
 new_home fresh
@@ -451,38 +466,38 @@ echo '{}' > "$S"
 install_cp >/dev/null
 echo auth > "$CP_TEST/claude-mode"
 
-cp_run warmup >/dev/null
-check "no notifier: nothing marked"      '[[ ! -e "$BASE/state/notified-auth" ]]'
+cp_run warmup claude >/dev/null
+check "no notifier: nothing marked"      '[[ ! -e "$BASE/state/claude/notified-auth" ]]'
 
 make_notifier
 echo 1 > "$CP_TEST/notify-fail"
-cp_run warmup >/dev/null
+cp_run warmup claude >/dev/null
 check "failed send: attempted"           '[[ $(count auth-required notify-attempts) == 1 ]]'
-check "failed send: not marked"          '[[ ! -e "$BASE/state/notified-auth" ]]'
+check "failed send: not marked"          '[[ ! -e "$BASE/state/claude/notified-auth" ]]'
 
-cp_run warmup >/dev/null
+cp_run warmup claude >/dev/null
 check "retry: delivered"                 '[[ $(count auth-required notify-delivered) == 1 ]]'
-check "retry: now marked"                '[[ -e "$BASE/state/notified-auth" ]]'
+check "retry: now marked"                '[[ -e "$BASE/state/claude/notified-auth" ]]'
 
-cp_run warmup >/dev/null
+cp_run warmup claude >/dev/null
 check "marked: not sent again"           '[[ $(count auth-required notify-attempts) == 2 ]]'
 
 echo ok > "$CP_TEST/claude-mode"
 echo 1 > "$CP_TEST/notify-fail"
-cp_run warmup >/dev/null
-check "recovery send failed: flag kept"  '[[ -e "$BASE/state/notified-auth" && $(count recovered notify-delivered) == 0 ]]'
+cp_run warmup claude >/dev/null
+check "recovery send failed: flag kept"  '[[ -e "$BASE/state/claude/notified-auth" && $(count recovered notify-delivered) == 0 ]]'
 
-cp_run warmup >/dev/null
-check "recovery retried and delivered"   '[[ $(count recovered notify-delivered) == 1 && ! -e "$BASE/state/notified-auth" ]]'
+cp_run warmup claude >/dev/null
+check "recovery retried and delivered"   '[[ $(count recovered notify-delivered) == 1 && ! -e "$BASE/state/claude/notified-auth" ]]'
 
-cp_run warmup >/dev/null
+cp_run warmup claude >/dev/null
 check "recovery announced once"          '[[ $(count recovered notify-attempts) == 2 ]]'
 
 echo fail > "$CP_TEST/claude-mode"
-for _ in 1 2; do cp_run warmup >/dev/null; done
+for _ in 1 2; do cp_run warmup claude >/dev/null; done
 check "two failures: quiet"              '[[ $(count warmup-failing notify-attempts) == 0 ]]'
-cp_run warmup >/dev/null
-check "third failure: announced"         '[[ $(count warmup-failing notify-delivered) == 1 && -e "$BASE/state/notified-failing" ]]'
+cp_run warmup claude >/dev/null
+check "third failure: announced"         '[[ $(count warmup-failing notify-delivered) == 1 && -e "$BASE/state/claude/notified-failing" ]]'
 
 # ======================================================================
 section "a scheduler that is not running gets noticed"
@@ -497,27 +512,27 @@ echo up > "$CP_TEST/atd"
 out="$(install_cp 2>&1)"
 check "no warning when atd is up"           '[[ $out != *"atd is not running"* ]]'
 check "status says atd is running"          '[[ $(cp_run status) == *"Scheduler       : atd running"* ]]'
-check "status: no run yet"                  '[[ $(cp_run status) == *"Last run        : none"* ]]'
+check "status: no run yet"                  '[[ $(cp_run status) != *"Last run"* ]]'
 
 make_notifier
 refresh() {
-    printf '{}' | cp_run observe >/dev/null
+    printf '{}' | cp_run observe claude >/dev/null
 }
 
-echo $(( $(date +%s) + 600 )) > "$BASE/state/at_target"
+echo $(( $(date +%s) + 600 )) > "$BASE/state/claude/at_target"
 refresh
 sleep 0.5
 check "target in the future: not looked at"  '[[ ! -e "$BASE/state/stall_checked_at" ]]'
 
-echo $(( $(date +%s) - 400 )) > "$BASE/state/at_target"
-echo 99 > "$BASE/state/at_job"
+echo $(( $(date +%s) - 400 )) > "$BASE/state/claude/at_target"
+echo 99 > "$BASE/state/claude/at_job"
 refresh
 wait_until '[[ -e "$BASE/state/stall_checked_at" ]]'
 sleep 0.3
 check "overdue but no longer queued: quiet" '[[ $(count scheduler-stalled notify-attempts) == 0 ]]'
 
 echo "$CP scheduled" > "$QUEUE/5"
-echo 5 > "$BASE/state/at_job"
+echo 5 > "$BASE/state/claude/at_job"
 rm -f "$BASE/state/stall_checked_at"
 echo 1 > "$CP_TEST/notify-fail"
 refresh
@@ -542,9 +557,69 @@ sleep 0.3
 check "marked: not sent again"              '[[ $(count scheduler-stalled notify-attempts) == 2 ]]'
 
 echo ok > "$CP_TEST/claude-mode"
-cp_run scheduled >/dev/null
+cp_run scheduled claude >/dev/null
 check "a run clears the stall, says so"     '[[ ! -e "$BASE/state/notified-stalled" && $(count recovered notify-delivered) == 1 ]]'
-check "status shows the last run"           '[[ $(cp_run status) == *"Last run        : 20"* ]]'
+check "status shows the last run"           '[[ $(cp_run status) == *"Last run      : 20"* ]]'
+
+# ======================================================================
+section "a second agent keeps its own window, schedule and failures"
+
+new_home multi
+with_cs
+NOW="$(date +%s)"
+codex_log "$(( NOW + 1800 ))" "$(( NOW + 200000 ))"
+install_cp >/dev/null
+
+check "both agents found"            '[[ $(cp_run providers | wc -l) == 2 ]]'
+check "codex planned from its log"   '[[ $(cat "$BASE/state/codex/at_target") == $(( NOW + 1815 )) ]]'
+check "window length from its report" '[[ $(cat "$BASE/state/codex/window_seconds") == 18000 ]]'
+check "its long window too"          '[[ $(cat "$BASE/state/codex/long_used_percent") == 13 ]]'
+check "claude waits for a reading"   '[[ ! -e "$BASE/state/claude/at_target" ]]'
+check "one job each so far"          '[[ $(our_jobs) == 1 ]]'
+
+printf '{"rate_limits":{"five_hour":{"used_percentage":50,"resets_at":%s}}}' "$(( NOW + 600 ))" | cp_run observe claude >/dev/null
+check "claude planned on its own"    '[[ $(cat "$BASE/state/claude/at_target") == $(( NOW + 615 )) ]]'
+check "codex plan untouched"         '[[ $(cat "$BASE/state/codex/at_target") == $(( NOW + 1815 )) ]]'
+check "a job each now"               '[[ $(our_jobs) == 2 ]]'
+
+cp_run scheduled codex >/dev/null 2>&1
+check "codex warmed up with its own command" 'grep -q -- "exec --skip-git-repo-check -s read-only" "$CP_TEST/codex-runs"'
+check "claude was not run"           '[[ $(count run claude-runs) == 0 ]]'
+check "codex estimate uses its window" '[[ $(cat "$BASE/state/codex/at_reason") == estimated-next-reset ]]'
+
+echo fail > "$CP_TEST/claude-mode"
+cp_run scheduled claude >/dev/null 2>&1
+check "failures counted per agent"   '[[ $(cat "$BASE/state/claude/failure_count") == 1 && $(cat "$BASE/state/codex/failure_count") == 0 ]]'
+
+install_cp uninstall >/dev/null
+check "uninstall takes both"         '[[ ! -e "$BASE" && $(our_jobs) == 0 ]]'
+
+# ======================================================================
+section "state from before 4.0.0 moves under its agent"
+
+new_home migrate
+with_cs
+install_cp >/dev/null
+# Put things back where a 3.x install kept them
+rm -rf "$BASE/state/claude"
+mv "$BASE/state/claude" "$BASE/x" 2>/dev/null
+printf '%s\n' "$FAKES/cs" > "$BASE/original-statusline-command"
+echo 12345        > "$BASE/state/at_target"
+echo anchor-hold  > "$BASE/state/at_reason"
+echo 7            > "$BASE/state/failure_count"
+echo 1790000000   > "$BASE/state/five_hour_reset"
+echo 42           > "$BASE/state/five_hour_pct"
+echo 1790500000   > "$BASE/state/seven_day_reset"
+echo 13           > "$BASE/state/seven_day_pct"
+: > "$BASE/state/notified-auth"
+
+install_cp >/dev/null
+check "short window moved and renamed" '[[ $(cat "$BASE/state/claude/resets_at") == 1790000000 && $(cat "$BASE/state/claude/used_percent") == 42 ]]'
+check "long window moved and renamed"  '[[ $(cat "$BASE/state/claude/long_resets_at") == 1790500000 && $(cat "$BASE/state/claude/long_used_percent") == 13 ]]'
+check "failure count moved"            '[[ $(cat "$BASE/state/claude/failure_count") == 7 ]]'
+check "alert flag moved"               '[[ -e "$BASE/state/claude/notified-auth" ]]'
+check "wrapped command moved"          '[[ $(cat "$ORIGFILE") == "$FAKES/cs" && ! -e "$BASE/original-statusline-command" ]]'
+check "nothing left flat"              '[[ ! -e "$BASE/state/at_target" && ! -e "$BASE/state/five_hour_reset" ]]'
 
 # ======================================================================
 section "anchor arithmetic, on fixed dates"
@@ -563,7 +638,7 @@ anchor_cases() {
     run() {
         printf '%s\n' "$2" > "$ANCHOR"
         printf '%s @ %s|%s|%s\n' "$1" "$2" \
-            "$(date -d "@$(apply_anchor "$(date -d "$1" +%s)")" '+%F %H:%M')" "$3"
+            "$(date -d "@$(apply_anchor 18000 "$(date -d "$1" +%s)")" '+%F %H:%M')" "$3"
     }
 
     run "2026-09-21 03:00" "06:00" "2026-09-21 06:00"   # held
@@ -593,7 +668,7 @@ install_cp >/dev/null
 
 # Feed observe a reset time, as a status line refresh would
 observe_reset() {
-    printf '{"rate_limits":{"five_hour":{"resets_at":%s,"used_percentage":10}}}' "$1" | cp_run observe >/dev/null
+    printf '{"rate_limits":{"five_hour":{"resets_at":%s,"used_percentage":10}}}' "$1" | cp_run observe claude >/dev/null
 }
 # The HH:MM, and the epoch second, of a moment given as an offset from now
 at_hhmm() { date -d "@$(( NOW + $1 ))" '+%H:%M'; }
@@ -612,26 +687,26 @@ check "rejects a bad time"            '[[ $rc == 2 && $(cat "$BASE/anchor") == $
 
 # A window due now would cover the anchor two hours out: hold it back
 observe_reset $(( NOW + 45 ))
-check "anchor inside the window: held" '[[ $(cat "$BASE/state/at_target") == $(at_epoch 7200) && $(cat "$BASE/state/at_reason") == anchor-hold ]]'
+check "anchor inside the window: held" '[[ $(cat "$BASE/state/claude/at_target") == $(at_epoch 7200) && $(cat "$BASE/state/claude/at_reason") == anchor-hold ]]'
 
 # An anchor beyond the end of the window changes nothing
 cp_run anchor "$(at_hhmm 21600)" >/dev/null
 observe_reset $(( NOW + 45 ))
-check "anchor past the window: as planned" '[[ $(cat "$BASE/state/at_target") == $(( NOW + 60 )) && $(cat "$BASE/state/at_reason") == official-five-hour-reset ]]'
+check "anchor past the window: as planned" '[[ $(cat "$BASE/state/claude/at_target") == $(( NOW + 60 )) && $(cat "$BASE/state/claude/at_reason") == official-reset ]]'
 
 # A window starting exactly on the anchor is already aligned. Clear the queue
 # first, or arm_job would keep the previous plan for the very same moment.
 cp_run anchor "$(at_hhmm 7200)" >/dev/null
 rm -f "$QUEUE"/*
 observe_reset $(( $(at_epoch 7200) - 15 ))
-check "window starts on the anchor: kept" '[[ $(cat "$BASE/state/at_target") == $(at_epoch 7200) && $(cat "$BASE/state/at_reason") == official-five-hour-reset ]]'
+check "window starts on the anchor: kept" '[[ $(cat "$BASE/state/claude/at_target") == $(at_epoch 7200) && $(cat "$BASE/state/claude/at_reason") == official-reset ]]'
 
 # Setting an anchor re-plans what is already scheduled
 cp_run anchor off >/dev/null
 observe_reset $(( NOW + 45 ))
-check "cleared: opens as soon as it can" '[[ $(cat "$BASE/state/at_target") == $(( NOW + 60 )) && $(cp_run anchor) == "Anchor: not set" ]]'
+check "cleared: opens as soon as it can" '[[ $(cat "$BASE/state/claude/at_target") == $(( NOW + 60 )) && $(cp_run anchor) == "Anchor: not set" ]]'
 cp_run anchor "$(at_hhmm 7200)" >/dev/null
-check "setting one re-plans the next run" '[[ $(cat "$BASE/state/at_target") == $(at_epoch 7200) && $(cat "$BASE/state/at_reason") == anchor-hold ]]'
+check "setting one re-plans the next run" '[[ $(cat "$BASE/state/claude/at_target") == $(at_epoch 7200) && $(cat "$BASE/state/claude/at_reason") == anchor-hold ]]'
 check "only one job of ours is queued"    '[[ $(our_jobs) == 1 ]]'
 
 install_cp >/dev/null
