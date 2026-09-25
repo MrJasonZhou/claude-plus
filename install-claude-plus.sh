@@ -12,12 +12,33 @@ BASE="$HOME/.claude/claude-plus"
 STATE="$BASE/state"
 BIN="$BASE/claude-plus.sh"
 PROVIDERS="$BASE/providers"
-# The command we wrap belongs to one agent, so it lives with that agent's state
-ORIG="$STATE/claude/original-statusline-command"
 NOTIFY="$BASE/notify.sh"
 ANCHOR="$BASE/anchor"
-SETTINGS="$HOME/.claude/settings.json"
 MARKER="/claude-plus/claude-plus.sh"
+
+# Agents that run a status line command of our choosing, and where each keeps
+# its settings. Wrapping one means editing that file, so only agents actually
+# installed here are ever touched.
+agent_settings() {
+    case "$1" in
+        claude) printf '%s\n' "$HOME/.claude/settings.json" ;;
+        agy)    printf '%s\n' "$HOME/.gemini/antigravity-cli/settings.json" ;;
+        *)      return 1 ;;
+    esac
+}
+
+wrapped_agents() {
+    local id
+    for id in claude agy; do
+        command -v "$id" >/dev/null 2>&1 && printf '%s\n' "$id"
+    done
+    return 0
+}
+
+# The command that agent used to run, saved with its own state
+agent_orig() {
+    printf '%s\n' "$STATE/$1/original-statusline-command"
+}
 
 usage() {
     cat >&2 <<USAGE
@@ -93,13 +114,20 @@ end
 is_installed() {
     [[ -e "$BASE" ]] && return 0
 
-    [[ -f "$SETTINGS" ]] &&
-        jq -e --arg marker "$MARKER" --arg orig "" ". as \$in | ($STRIP_FILTER) != \$in" "$SETTINGS" >/dev/null 2>&1
+    local id file
+    for id in $(wrapped_agents); do
+        file="$(agent_settings "$id")" || continue
+        [[ -f "$file" ]] || continue
+        jq -e --arg marker "$MARKER" --arg orig "" ". as \$in | ($STRIP_FILTER) != \$in" "$file" >/dev/null 2>&1 &&
+            return 0
+    done
+
+    return 1
 }
 
 status_command() {
-    [[ -f "$SETTINGS" ]] || return 0
-    jq -r 'if (.statusLine | type) == "object" then .statusLine.command // empty else empty end' "$SETTINGS"
+    [[ -f "$1" ]] || return 0
+    jq -r 'if (.statusLine | type) == "object" then .statusLine.command // empty else empty end' "$1"
 }
 
 # What uninstall leaves at our script's path when another program still calls
@@ -119,9 +147,11 @@ write_passthrough() {
         # Same loop guard as the real script
         echo '[[ -z "${CLAUDE_PLUS_IN_STATUSLINE:-}" ]] || exit 0'
         echo 'export CLAUDE_PLUS_IN_STATUSLINE=1'
-        printf 'orig=%q\n' "$ORIG"
-        echo 'if [[ "${1:-}" == statusline && -s "$orig" ]]; then'
-        echo '    exec bash -c "$(cat "$orig")"'
+        # The caller names the agent, so the right command is rendered
+        printf 'state=%q\n' "$STATE"
+        echo 'if [[ "${1:-}" == statusline ]]; then'
+        echo '    orig="$state/${2:-claude}/original-statusline-command"'
+        echo '    [[ -s "$orig" ]] && exec bash -c "$(cat "$orig")"'
         echo 'fi'
     } > "$tmp"
 
@@ -232,23 +262,25 @@ chain_calls_us() {
 remove_installation() {
     local keep=("$@")
 
-    if [[ -f "$SETTINGS" ]]; then
-        local orig="" tmp
+    local id file orig tmp
 
-        if [[ -s "$ORIG" ]]; then
-            orig="$(cat "$ORIG")"
-        fi
+    for id in $(wrapped_agents); do
+        file="$(agent_settings "$id")" || continue
+        [[ -f "$file" ]] || continue
+
+        orig=""
+        [[ -s "$(agent_orig "$id")" ]] && orig="$(cat "$(agent_orig "$id")")"
 
         tmp="$(mktemp)"
-        jq --arg marker "$MARKER" --arg orig "$orig" "$STRIP_FILTER" "$SETTINGS" > "$tmp"
+        jq --arg marker "$MARKER" --arg orig "$orig" "$STRIP_FILTER" "$file" > "$tmp"
 
         # Rewrite only when there was something of ours to take out
-        if cmp -s <(jq -S . "$SETTINGS") <(jq -S . "$tmp"); then
+        if cmp -s <(jq -S . "$file") <(jq -S . "$tmp"); then
             rm -f "$tmp"
         else
-            mv "$tmp" "$SETTINGS"
+            mv "$tmp" "$file"
         fi
-    fi
+    done
 
     if command -v atq >/dev/null 2>&1; then
         local job_id
@@ -328,11 +360,46 @@ esac
 
 require jq
 
-# Refuse to touch a settings.json that is not valid JSON
-if [[ -f "$SETTINGS" ]] && ! jq empty "$SETTINGS" 2>/dev/null; then
-    echo "$SETTINGS is not valid JSON. Fix it first; Claude Plus will not edit it." >&2
-    exit 1
-fi
+# Refuse to touch settings that are not valid JSON
+for _id in $(wrapped_agents); do
+    _file="$(agent_settings "$_id")" || continue
+    if [[ -f "$_file" ]] && ! jq empty "$_file" 2>/dev/null; then
+        echo "$_file is not valid JSON. Fix it first; Claude Plus will not edit it." >&2
+        exit 1
+    fi
+done
+unset _id _file
+
+# Agents whose status line another program has wrapped around ours: we stay
+# inside those chains rather than wrapping the wrapper. Filled in below.
+CHAINED=""
+
+in_chain() {
+    [[ " $CHAINED " == *" $1 "* ]]
+}
+
+# Probe each agent's current status line, and back its settings up
+survey_agents() {
+    local suffix="$1" id file cmd
+    BACKUPS=""
+
+    for id in $(wrapped_agents); do
+        file="$(agent_settings "$id")" || continue
+        [[ -f "$file" ]] || continue
+
+        cmd="$(status_command "$file")"
+        if chain_calls_us "$cmd"; then
+            CHAINED="$CHAINED $id"
+            CHAIN_COMMANDS="$CHAIN_COMMANDS$id: $cmd"$'\n'
+        fi
+
+        cp -p "$file" "$file.claude-plus-$suffix-backup.$STAMP"
+        BACKUPS="$BACKUPS$file.claude-plus-$suffix-backup.$STAMP"$'\n'
+    done
+}
+
+CHAIN_COMMANDS=""
+BACKUPS=""
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 
@@ -344,70 +411,59 @@ if [[ "$ACTION" == "uninstall" ]]; then
         exit 0
     fi
 
-    CURRENT_STATUS_COMMAND="$(status_command)"
-    KEEP_CHAIN=0
-    if chain_calls_us "$CURRENT_STATUS_COMMAND"; then
-        KEEP_CHAIN=1
-    fi
+    survey_agents uninstall
 
-    SETTINGS_BACKUP=""
-    if [[ -f "$SETTINGS" ]]; then
-        SETTINGS_BACKUP="$SETTINGS.claude-plus-uninstall-backup.$STAMP"
-        cp -p "$SETTINGS" "$SETTINGS_BACKUP"
-    fi
+    # The commands any surviving chain has to keep rendering
+    SAVED=""
+    for _id in $CHAINED; do
+        [[ -s "$(agent_orig "$_id")" ]] &&
+            SAVED="$SAVED$_id"$'\t'"$(cat "$(agent_orig "$_id")")"$'\n'
+    done
 
-    if (( KEEP_CHAIN )); then
-        # Leave the path the other program calls, rendering what we used to
-        # wrap. Only that one command survives: everything else goes, and it
-        # comes back afterwards rather than keeping the whole of state/.
-        SAVED_ORIG=""
-        [[ -s "$ORIG" ]] && SAVED_ORIG="$(cat "$ORIG")"
+    remove_installation
 
-        remove_installation
-
-        if [[ -n "$SAVED_ORIG" ]]; then
-            mkdir -p "$(dirname "$ORIG")"
-            printf '%s\n' "$SAVED_ORIG" > "$ORIG"
-        fi
+    if [[ -n "$CHAINED" ]]; then
+        while IFS=$'\t' read -r _id _cmd; do
+            [[ -n "$_id" ]] || continue
+            mkdir -p "$(dirname "$(agent_orig "$_id")")"
+            printf '%s\n' "$_cmd" > "$(agent_orig "$_id")"
+        done <<< "$SAVED"
 
         write_passthrough "$BIN"
-    else
-        remove_installation
     fi
 
     echo "Claude Plus uninstalled."
-    if [[ -n "$SETTINGS_BACKUP" ]]; then
-        echo "settings.json was edited in place. Its state just before: $SETTINGS_BACKUP"
+    if [[ -n "$BACKUPS" ]]; then
+        echo "Settings were edited in place. Their state just before:"
+        printf '%s' "$BACKUPS" | sed 's/^/  /'
     fi
 
-    if (( KEEP_CHAIN )); then
+    if [[ -n "$CHAINED" ]]; then
         echo
-        echo "Your status line belongs to another program, which still calls Claude Plus:"
-        echo "  $CURRENT_STATUS_COMMAND"
+        echo "A status line belonging to another program still calls Claude Plus:"
+        printf '%s' "$CHAIN_COMMANDS" | sed 's/^/  /'
         echo "A pass-through was left at $BIN so it keeps working."
         echo "Once that program stops calling it, run uninstall again to remove it."
     fi
     exit 0
 fi
 
-require claude at atq atrm flock date timeout
+require at atq atrm flock date timeout
+
+if [[ -z "$(wrapped_agents)" ]] && ! command -v codex >/dev/null 2>&1; then
+    echo "None of the agents Claude Plus knows about are installed here." >&2
+    echo "Looked for: claude, codex, agy" >&2
+    exit 1
+fi
 
 mkdir -p "$HOME/.claude"
 
-# Start from an empty object when there is no settings.json yet
-if [[ ! -f "$SETTINGS" ]]; then
-    printf '{}\n' > "$SETTINGS"
+# Claude Code may not have written its settings yet
+if command -v claude >/dev/null 2>&1 && [[ ! -f "$(agent_settings claude)" ]]; then
+    printf '{}\n' > "$(agent_settings claude)"
 fi
 
-SETTINGS_BACKUP="$SETTINGS.claude-plus-install-backup.$STAMP"
-cp -p "$SETTINGS" "$SETTINGS_BACKUP"
-
-# If another program has wrapped the status line around ours, stay inside
-# that chain: keep what we render and do not wrap the wrapper
-KEEP_CHAIN=0
-if chain_calls_us "$(status_command)"; then
-    KEEP_CHAIN=1
-fi
+survey_agents install
 
 if is_installed; then
     echo "Existing installation detected. Removing it first..."
@@ -416,17 +472,15 @@ fi
 # Upgrade clears settings and at jobs exactly as uninstall does, but keeps
 # what is still running (reset times, failure and notification state), the
 # user's notifier (it holds their credentials), the anchor and the log
+# The wrapped commands live under state/, which is kept anyway
 KEEP=("$(basename "$STATE")" "$(basename "$NOTIFY")" "$(basename "$ANCHOR")" "claude-plus.log")
-if (( KEEP_CHAIN )); then
-    KEEP+=("$(basename "$ORIG")")
-fi
 remove_installation "${KEEP[@]}"
 
 # Versions before 3.0.0 resumed rate-limited sessions themselves. Claude Code
 # now does that on its own, so their queue of sessions has no reader.
 rm -rf "$STATE/pending" "$STATE/stale"
 
-mkdir -p "$BASE" "$STATE" "$PROVIDERS" "$(dirname "$ORIG")"
+mkdir -p "$BASE" "$STATE" "$PROVIDERS"
 
 # Install the notifier samples when they are reachable from this script.
 # npx puts a symlink in node_modules/.bin, so resolve that first.
@@ -442,15 +496,20 @@ if compgen -G "$SCRIPT_DIR/notify/*.sample" >/dev/null; then
 fi
 
 # Removal has already turned any old wrapper of ours back into the user's own
-# command, so whatever statusLine is there now is the one to wrap. Inside
-# another program's chain, removal kept the command we render instead.
-if (( KEEP_CHAIN == 0 )); then
-    CURRENT_STATUS_COMMAND="$(status_command)"
+# command, so whatever statusLine each agent has now is the one to wrap.
+# Inside another program's chain, removal kept the command we render instead.
+for _id in $(wrapped_agents); do
+    in_chain "$_id" && continue
+    _file="$(agent_settings "$_id")" || continue
+    [[ -f "$_file" ]] || continue
 
-    if [[ -n "$CURRENT_STATUS_COMMAND" && "$CURRENT_STATUS_COMMAND" != *"$MARKER"* ]]; then
-        printf '%s\n' "$CURRENT_STATUS_COMMAND" > "$ORIG"
+    _current="$(status_command "$_file")"
+    if [[ -n "$_current" && "$_current" != *"$MARKER"* ]]; then
+        mkdir -p "$STATE/$_id"
+        printf '%s\n' "$_current" > "$(agent_orig "$_id")"
     fi
-fi
+done
+unset _id _file _current
 
 cat > "$BIN" <<'CLAUDE_PLUS'
 #!/usr/bin/env bash
@@ -1320,16 +1379,64 @@ codex_warmup() {
 }
 PROVIDER_CODEX
 
+cat > "$PROVIDERS/agy.sh" <<'PROVIDER_AGY'
+# Antigravity. Its status line hook pushes quota on every refresh, like Claude
+# Code, but reports what is left rather than what is used, as RFC 3339 times,
+# split across several buckets.
+agy_label() {
+    printf 'Antigravity\n'
+}
+
+agy_available() {
+    command -v agy >/dev/null 2>&1
+}
+
+agy_capabilities() {
+    printf 'keep alert\n'
+}
+
+# Buckets are named by the window they belong to (gemini-5h, 3p-weekly, ...).
+# Take the tightest of each kind: whichever runs out first is what stops you.
+agy_parse_limits() {
+    jq -c '
+        def buckets(suffix):
+            (.quota // {}) | to_entries | map(select(.key | endswith(suffix))) | map(.value);
+        def pct(bs): 100 - (([bs[].remaining_fraction] | min) * 100) | . * 100 | round / 100;
+        def first_reset(bs): [bs[].reset_time | fromdateiso8601] | min;
+
+        buckets("-5h") as $short
+        | buckets("-weekly") as $long
+        | {
+            window_seconds: 18000,
+            used_percent: (if ($short | length) > 0 then pct($short) else null end),
+            resets_at: (if ($short | length) > 0 then first_reset($short) else null end),
+            long_used_percent: (if ($long | length) > 0 then pct($long) else null end),
+            long_resets_at: (if ($long | length) > 0 then first_reset($long) else null end)
+          }
+        | with_entries(select(.value != null))' 2>/dev/null
+}
+
+agy_warmup() {
+    timeout 180 agy -p 'Reply only OK.' 2>&1
+}
+PROVIDER_AGY
+
 for _provider in "$PROVIDERS"/*.sh; do
     bash -n "$_provider"
 done
 
-# Removal above has already taken out every entry of ours; the status line
-# wrapper is all Claude Plus adds. Inside another program's chain, not even that.
-if (( KEEP_CHAIN == 0 )); then
+# Removal above has already taken out every entry of ours; a status line
+# wrapper is all Claude Plus adds, and inside another program's chain not even
+# that. Each agent gets its own id on the command, so the wrapper knows whose
+# reading it is handling.
+for _id in $(wrapped_agents); do
+    in_chain "$_id" && continue
+    _file="$(agent_settings "$_id")" || continue
+    [[ -f "$_file" ]] || continue
+
     TMP_SETTINGS="$(mktemp)"
 
-    jq --arg status_cmd "$BIN statusline claude" '
+    jq --arg status_cmd "$BIN statusline $_id" '
         .statusLine = (
             (.statusLine // {})
             + {
@@ -1337,11 +1444,12 @@ if (( KEEP_CHAIN == 0 )); then
                 "command": $status_cmd
             }
         )
-    ' "$SETTINGS" > "$TMP_SETTINGS"
+    ' "$_file" > "$TMP_SETTINGS"
 
     jq empty "$TMP_SETTINGS"
-    mv "$TMP_SETTINGS" "$SETTINGS"
-fi
+    mv "$TMP_SETTINGS" "$_file"
+done
+unset _id _file
 
 # Removal dropped the old at job; put the run the previous version had
 # planned back on the new one
@@ -1359,10 +1467,11 @@ if (( SCHEDULER_RC == 1 )); then
     echo "Warning: atd is not running, so nothing Claude Plus schedules will run." >&2
     echo "         Start it with: sudo systemctl enable --now atd" >&2
 fi
-if (( KEEP_CHAIN )); then
-    echo "Your status line belongs to another program that calls Claude Plus; it was left as it is."
+if [[ -n "$CHAINED" ]]; then
+    echo "A status line belonging to another program already calls Claude Plus; it was left as it is:"
+    printf '%s' "$CHAIN_COMMANDS" | sed 's/^/  /'
 fi
-echo "Settings backup : $SETTINGS_BACKUP"
+echo "Agents          : $("$BIN" providers | awk '/installed/ {printf "%s ", $1}')"
 echo "Main script     : $BIN"
 echo
 echo "Check:"

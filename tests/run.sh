@@ -83,6 +83,13 @@ echo "$*" >> "$CP_TEST/codex-runs"
 echo codex-ok
 EOF
 
+# agy: another agent with a status line hook of its own
+cat > "$FAKES/agy" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >> "$CP_TEST/agy-runs"
+echo agy-ok
+EOF
+
 # The user's own status line
 cat > "$FAKES/cs" <<'EOF'
 #!/usr/bin/env bash
@@ -152,7 +159,8 @@ new_home() {
     BASE="$H/.claude/claude-plus"
     CP="$BASE/claude-plus.sh"
     ORIGFILE="$BASE/state/claude/original-statusline-command"
-    rm -f "$QUEUE"/* "$CP_TEST"/claude-mode "$CP_TEST"/claude-runs "$CP_TEST"/codex-runs "$CP_TEST"/notify-*
+    rm -f "$QUEUE"/* "$CP_TEST"/claude-mode "$CP_TEST"/claude-runs "$CP_TEST"/codex-runs "$CP_TEST"/agy-runs "$CP_TEST"/notify-*
+    AGYS="$H/.gemini/antigravity-cli/settings.json"
     echo up > "$CP_TEST/atd"
 }
 
@@ -570,7 +578,7 @@ NOW="$(date +%s)"
 codex_log "$(( NOW + 1800 ))" "$(( NOW + 200000 ))"
 install_cp >/dev/null
 
-check "both agents found"            '[[ $(cp_run providers | wc -l) == 2 ]]'
+check "every installed agent found"  '[[ $(cp_run providers | grep -c installed) == 3 ]]'
 check "codex planned from its log"   '[[ $(cat "$BASE/state/codex/at_target") == $(( NOW + 1815 )) ]]'
 check "window length from its report" '[[ $(cat "$BASE/state/codex/window_seconds") == 18000 ]]'
 check "its long window too"          '[[ $(cat "$BASE/state/codex/long_used_percent") == 13 ]]'
@@ -593,6 +601,39 @@ check "failures counted per agent"   '[[ $(cat "$BASE/state/claude/failure_count
 
 install_cp uninstall >/dev/null
 check "uninstall takes both"         '[[ ! -e "$BASE" && $(our_jobs) == 0 ]]'
+
+# ======================================================================
+section "an agent with its own settings file is wrapped there"
+
+new_home agy
+with_cs
+mkdir -p "$(dirname "$AGYS")"
+printf '{"model":"gemini","colorScheme":"dark","statusLine":{"type":"command","command":"%s"}}\n' "$FAKES/cs" > "$AGYS"
+install_cp >/dev/null
+
+check "agy found"                    '[[ $(cp_run providers | grep -c agy) == 1 ]]'
+check "wrapped in its own settings"  '[[ $(jq -r .statusLine.command "$AGYS") == "$CP statusline agy" ]]'
+check "its other settings untouched" '[[ $(jq -r .model "$AGYS") == gemini && $(jq -r .colorScheme "$AGYS") == dark ]]'
+check "claude wrapped separately"    '[[ $(jq -r .statusLine.command "$S") == "$CP statusline claude" ]]'
+
+NOW="$(date +%s)"
+RESET="$(date -u -d "@$(( NOW + 1200 ))" '+%Y-%m-%dT%H:%M:%SZ')"
+WEEK="$(date -u -d "@$(( NOW + 400000 ))" '+%Y-%m-%dT%H:%M:%SZ')"
+printf '{"quota":{"gemini-5h":{"remaining_fraction":1,"reset_time":"%s"},"3p-5h":{"remaining_fraction":0.75,"reset_time":"%s"},"gemini-weekly":{"remaining_fraction":0.9,"reset_time":"%s"}}}' \
+    "$RESET" "$RESET" "$WEEK" | cp_run observe agy >/dev/null
+
+check "remaining fraction becomes used" '[[ $(cat "$BASE/state/agy/used_percent") == 25 ]]'
+check "RFC 3339 becomes an epoch"       '[[ $(cat "$BASE/state/agy/resets_at") == $(( NOW + 1200 )) ]]'
+check "long window read too"            '[[ $(cat "$BASE/state/agy/long_used_percent") == 10 ]]'
+check "planned from its own reading"    '[[ $(cat "$BASE/state/agy/at_target") == $(( NOW + 1215 )) ]]'
+
+cp_run scheduled agy >/dev/null 2>&1
+check "warmed up with its own command"  'grep -q -- "-p Reply only OK." "$CP_TEST/agy-runs"'
+
+out="$(install_cp uninstall)"
+check "its status line restored"        '[[ $(jq -r .statusLine.command "$AGYS") == "$FAKES/cs" ]]'
+check "claude status line restored"     '[[ $(jq -r .statusLine.command "$S") == "$FAKES/cs" ]]'
+check "both settings backed up"         '[[ $(compgen -G "$AGYS.claude-plus-uninstall-backup.*" | wc -l) == 1 ]]'
 
 # ======================================================================
 section "state from before 4.0.0 moves under its agent"
