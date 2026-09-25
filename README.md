@@ -25,6 +25,8 @@ Each agent gets its own window, schedule and alerts; nothing is shared between t
 
 **When the window opens decides when it ends.** A window starts at your first request, not at a fixed hour. Begin work at 9:00 with a five-hour window and it runs 9:00-14:00; burn through the quota by 11:00 and you are locked out until 14:00. Had a tiny request opened the window at 6:00 instead, it would expire at 11:00 — exactly when you run dry — with a fresh quota already waiting. With a window always running, one is already under way when you start: whatever is left of it is quota that would otherwise go unused, and a fresh one is at most a window away, usually much less.
 
+**A working day fits more windows when they start early.** Begin at 9:00 and the windows run 9:00-14:00 and 14:00-19:00: two of them before you finish for the day. Have one opened at 6:00 instead and the day is covered by 6:00-11:00, 11:00-16:00 and 16:00-21:00 — three, for the same hours at the desk. The anchor below is how you pin that.
+
 **Knowing when it has stopped helping.** Keeping windows open works until a login expires or the scheduler stops, and then nothing happens at all. Claude Plus notices either and says so, rather than failing quietly all weekend.
 
 ## Requirements

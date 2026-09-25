@@ -25,6 +25,8 @@ Chaque agent a sa propre fenêtre, sa propre planification et ses propres alerte
 
 **L'heure d'ouverture de la fenêtre décide de son heure de fin.** Une fenêtre démarre à votre première requête, pas à une heure fixe. Avec une fenêtre de cinq heures : commencez à 9h00 et elle court de 9h00 à 14h00 ; épuisez le quota à 11h00 et vous êtes bloqué jusqu'à 14h00. Si une minuscule requête avait ouvert la fenêtre à 6h00, celle-ci expirerait à 11h00 — précisément quand vous êtes à sec — avec un quota neuf déjà prêt. Avec une fenêtre toujours active, il y en a déjà une en cours quand vous commencez : ce qu'il en reste est du quota qui serait sinon perdu, et un quota neuf arrive au plus dans une fenêtre, généralement bien moins.
 
+**Une journée de travail contient plus de fenêtres quand elles commencent tôt.** Commencez à 9h00 et les fenêtres courent de 9h00 à 14h00 puis de 14h00 à 19h00 : deux avant la fin de votre journée. Si l'une s'était ouverte à 6h00, la journée serait couverte par 6h00-11h00, 11h00-16h00 et 16h00-21h00 — trois, pour les mêmes heures au bureau. C'est à cela que sert l'heure fixe, plus bas.
+
 **Savoir quand il a cessé d'aider.** Garder des fenêtres ouvertes ne fonctionne que tant qu'une authentification est valide et que le planificateur tourne ; si l'un des deux s'arrête, plus rien ne se passe. Claude Plus repère l'un comme l'autre et vous le dit, au lieu d'échouer en silence tout un week-end.
 
 ## Prérequis

@@ -25,6 +25,8 @@ Cada agente tem a própria janela, o próprio agendamento e os próprios avisos;
 
 **Quando a janela abre decide quando ela termina.** Uma janela começa no seu primeiro pedido, não numa hora fixa. Com uma janela de cinco horas: comece a trabalhar às 9h e ela vai das 9h às 14h; esgote a cota às 11h e você fica travado até as 14h. Se em vez disso um pedido mínimo tivesse aberto a janela às 6h, ela expiraria às 11h — exatamente quando você fica sem nada — com uma cota nova já esperando. Com uma janela sempre aberta, já há uma em andamento quando você começa: o que resta dela é cota que de outro modo se perderia, e uma nova chega em no máximo uma janela, geralmente bem antes.
 
+**Um dia de trabalho cabe mais janelas quando elas começam cedo.** Comece às 9h e as janelas vão das 9h às 14h e das 14h às 19h: duas até você encerrar o dia. Se em vez disso uma tivesse aberto às 6h, o dia seria coberto por 6h-11h, 11h-16h e 16h-21h — três, nas mesmas horas de trabalho. É para isso que serve o horário fixo, mais abaixo.
+
 **Saber quando ele parou de ajudar.** Manter janelas abertas só funciona enquanto um login for válido e o agendador estiver rodando; se um dos dois parar, nada acontece. O Claude Plus percebe qualquer um dos casos e avisa, em vez de falhar em silêncio o fim de semana inteiro.
 
 ## Requisitos

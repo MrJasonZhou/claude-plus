@@ -25,6 +25,8 @@ Jeder Agent bekommt sein eigenes Fenster, seinen eigenen Zeitplan und seine eige
 
 **Wann das Fenster öffnet, entscheidet, wann es endet.** Ein Fenster beginnt mit Ihrer ersten Anfrage, nicht zu einer festen Uhrzeit. Bei einem Fünf-Stunden-Fenster: Beginnen Sie um 9:00 zu arbeiten, läuft es von 9:00 bis 14:00; ist das Kontingent um 11:00 aufgebraucht, sind Sie bis 14:00 ausgesperrt. Hätte stattdessen eine winzige Anfrage das Fenster um 6:00 geöffnet, liefe es um 11:00 ab — genau dann, wenn Ihnen der Vorrat ausgeht — und ein frisches Kontingent stünde bereit. Läuft ständig ein Fenster, ist beim Arbeitsbeginn schon eines im Gang: Was davon übrig ist, wäre sonst ungenutzt verfallen, und ein frisches Kontingent ist höchstens ein Fenster entfernt, meist viel weniger.
 
+**Früh geöffnete Fenster passen öfter in einen Arbeitstag.** Beginnen Sie um 9:00, laufen die Fenster von 9:00 bis 14:00 und von 14:00 bis 19:00 — zwei bis zum Feierabend. Wurde stattdessen um 6:00 eines geöffnet, deckt der Tag 6:00-11:00, 11:00-16:00 und 16:00-21:00 ab: drei, bei derselben Zeit am Schreibtisch. Dafür ist die feste Uhrzeit weiter unten da.
+
 **Erkennen, wann es nicht mehr hilft.** Fenster offen zu halten funktioniert nur, solange eine Anmeldung gültig ist und der Planer läuft; fällt eines davon aus, passiert gar nichts. Claude Plus bemerkt beides und sagt es Ihnen, statt ein ganzes Wochenende lang still zu scheitern.
 
 ## Voraussetzungen

@@ -25,6 +25,8 @@ Ogni agente ha la propria finestra, la propria pianificazione e i propri avvisi;
 
 **Quando si apre la finestra decide quando finisce.** Una finestra parte dalla tua prima richiesta, non a un'ora fissa. Con una finestra da cinque ore: inizi a lavorare alle 9:00 e va dalle 9:00 alle 14:00; esaurisci la quota alle 11:00 e resti fuori fino alle 14:00. Se invece una minuscola richiesta avesse aperto la finestra alle 6:00, questa scadrebbe alle 11:00 — esattamente quando rimani a secco — con una quota nuova già pronta. Con una finestra sempre attiva, quando inizi ce n'è già una in corso: ciò che ne resta è quota che altrimenti andrebbe sprecata, e una nuova arriva al massimo tra una finestra, di solito molto prima.
 
+**Una giornata di lavoro contiene più finestre se cominciano presto.** Inizi alle 9:00 e le finestre vanno dalle 9:00 alle 14:00 e dalle 14:00 alle 19:00: due prima di staccare. Se invece una si fosse aperta alle 6:00, la giornata sarebbe coperta da 6:00-11:00, 11:00-16:00 e 16:00-21:00 — tre, a parità di ore alla scrivania. L'ora fissa più sotto serve proprio a questo.
+
 **Sapere quando ha smesso di aiutarti.** Tenere aperte le finestre funziona solo finché un accesso è valido e il pianificatore è attivo; se uno dei due si ferma, non succede più nulla. Claude Plus riconosce entrambi i casi e te lo dice, invece di fallire in silenzio per tutto il fine settimana.
 
 ## Requisiti
