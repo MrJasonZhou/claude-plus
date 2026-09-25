@@ -2,8 +2,9 @@
 
 Analysis of 2.3.1, 2026-09-17, revised since. The scheduler check listed here
 went into 2.4.0, 3.0.0 removed Resume (see Decided against), 3.1.0 added an
-anchor time after all, and 4.0.0 split out the provider layer and added Codex
-and Antigravity; nothing else has been started. Code is referred to by
+anchor time after all, 4.0.0 split out the provider layer and added Codex and
+Antigravity, and 4.1.0 made the warmup model replaceable; nothing else has
+been started. Code is referred to by
 function name rather than line number, since lines move.
 
 ## Features
@@ -39,8 +40,6 @@ generated script would close this.
   Both would still earn `alert` if anyone wants the auth and scheduler
   warnings for them.
 - `claude-plus.log` is never pruned. It grows slowly.
-- `--model haiku` is hard-coded. If that alias ever stops working, the only
-  signal is the repeated-failure alert.
 
 ### Decided against
 
@@ -73,6 +72,18 @@ generated script would close this.
   is only half an hour away. With r hours left in the current window when work
   starts, a smaller r is better; the worst case, r close to five hours, is the
   same as having no Keep at all.
+- **Asking the model which model to warm up with.** The idea was to end each
+  warmup by asking which model will be cheapest in twelve hours and use that
+  one next time, so the hard-coded id could never go stale. Tried on
+  2026-09-25: Haiku answered "I cannot predict price changes twelve hours
+  from now. I have no real-time pricing data" - and an answer it did give
+  would be a guess, possibly a model id that does not exist. The dependency
+  is circular too: once the id is dead, the question cannot be asked either.
+  What went in instead (4.1.0) is a fallback. A dead id gives exit code 1 and
+  an output carrying `unrecognized_model`, which is not matched by the
+  expired-login pattern, so it can be told apart: the warmup is retried with
+  no model at all, the fallback is remembered per agent, and one alert names
+  the model. `claude-plus.sh model <agent> <name>` overrides it by hand.
 - **A watchdog independent of `at`.** The scheduler check runs on status line
   refreshes, so a scheduler that stops overnight is only noticed the next time
   Claude Code starts. Catching it sooner would take cron or a systemd timer,

@@ -36,8 +36,10 @@ the rest have defaults.
 | `<id>_available` | — | exit 0 when the agent is installed here |
 | `<id>_capabilities` | — | space-separated: `keep`, `alert` |
 | `<id>_parse_limits` | the agent's own JSON on stdin | the fields above as JSON, omitting what it does not know |
-| `<id>_warmup` | — | runs the smallest possible request; output on stdout, exit code decides |
+| `<id>_warmup` | a model id, possibly empty | runs the smallest possible request; output on stdout, exit code decides |
+| `<id>_cheap_model` | — | the cheapest model worth warming up with; empty to let the agent choose |
 | `<id>_auth_failed` | warmup output on stdin | exit 0 when the failure is an expired login |
+| `<id>_unknown_model` | warmup output on stdin | exit 0 when the failure is a model the agent no longer knows |
 | `<id>_pull_limits` | — | the agent's own JSON, for agents that cannot push (see below) |
 
 ### Capabilities
@@ -51,6 +53,16 @@ than metering quota (Kimi Code) wastes nothing when it goes unused, and an
 agent with one shared weekly pool and no short window (Grok Build) has no
 window to keep open. Those providers declare `alert` alone, and the core never
 schedules a warmup for them.
+
+### The warmup model
+
+A warmup should be the cheapest request the agent will accept, which usually
+means naming a small model. Model ids are not forever, so the core never
+trusts one: when a warmup fails and `<id>_unknown_model` recognises the
+output, it drops to whatever the agent picks for itself, remembers that in
+`state/<id>/warmup_model` and says so once. Both functions have defaults —
+no model, and a general "does not exist" pattern — so a provider whose agent
+takes no `--model` need not define either.
 
 ### Push and pull
 

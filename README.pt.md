@@ -75,16 +75,27 @@ Por padrão, uma janela abre assim que a anterior é reiniciada, então a cadeia
 
 Uma janela que passaria por cima desse horário espera por ele: a prevista para 03h cobriria 03h-08h e engoliria as 06h, então ela abre às 06h. As horas antes ficam sem janela — se você trabalhar nesse período, seu próprio primeiro pedido abre uma normalmente. A configuração vale para todos os agentes.
 
+## O modelo usado no warm-up
+
+Abrir uma janela custa um pedido, então o Claude Plus o mantém o menor possível: o modelo mais barato do agente, sem ferramentas e sem escrever nada no histórico. Modelos vêm e vão, e quando um agente deixa de conhecer o que está em uso ele avisa claramente — o Claude Plus passa então para o modelo padrão do próprio agente e conta isso a você uma vez, em vez de falhar janela após janela até alguém ler o log.
+
+```bash
+~/.claude/claude-plus/claude-plus.sh model                 # com que cada agente é aquecido
+~/.claude/claude-plus/claude-plus.sh model claude sonnet   # escolher um você mesmo
+~/.claude/claude-plus/claude-plus.sh model claude auto     # voltar ao mais barato
+```
+
 ## Avisos
 
-O Claude Plus fica quieto enquanto nada precisa de você, e informa quatro coisas:
+O Claude Plus fica quieto enquanto nada precisa de você, e informa cinco coisas:
 
 | | |
 |---|---|
 | **Desconectado** | O login de um agente expirou; para ele nada pode ser aberto até você entrar de novo |
 | **Falhas repetidas** | Vários warm-ups seguidos falharam para um agente |
 | **Agendador parado** | Uma execução agendada está muito atrasada, então nenhuma janela está sendo mantida aberta; geralmente o `atd` não está rodando |
-| **De volta ao normal** | Ele se recuperou de qualquer um dos casos acima |
+| **De volta ao normal** | Ele se recuperou de qualquer um dos problemas acima |
+| **Modelo de warm-up sumiu** | O modelo com que um agente era aquecido não existe mais, então a partir de agora usa-se o padrão dele |
 
 Cada um é anunciado uma única vez por agente, não a cada nova tentativa: um problema durante a noite custa uma só mensagem. Os limites de uso em si nunca são anunciados: são rotina, e os agentes retomam sozinhos depois deles.
 

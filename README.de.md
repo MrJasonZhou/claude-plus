@@ -75,16 +75,27 @@ Standardmäßig öffnet ein Fenster, sobald das letzte zurückgesetzt wird; die 
 
 Ein Fenster, das über diese Uhrzeit hinweglaufen würde, wartet stattdessen auf sie: eines, das um 03:00 fällig wäre, deckte 03:00-08:00 ab und verschlänge 06:00, also öffnet es um 06:00. Die Stunden davor bleiben dann ohne Fenster — arbeiten Sie darin, öffnet Ihre eigene erste Anfrage wie gewohnt eines. Die Uhrzeit gilt für alle Agenten.
 
+## Modell für das Warm-up
+
+Ein Fenster zu öffnen kostet eine Anfrage, also hält Claude Plus sie so klein wie möglich: das günstigste Modell des jeweiligen Agenten, keine Werkzeuge, nichts im Verlauf. Modelle kommen und gehen, und wenn ein Agent das gerade benutzte nicht mehr kennt, sagt er das deutlich — Claude Plus wechselt dann auf das eigene Standardmodell des Agenten und sagt Ihnen einmal Bescheid, statt Fenster für Fenster zu scheitern, bis jemand das Log liest.
+
+```bash
+~/.claude/claude-plus/claude-plus.sh model                 # womit jeder Agent aufgewärmt wird
+~/.claude/claude-plus/claude-plus.sh model claude sonnet   # selbst eines wählen
+~/.claude/claude-plus/claude-plus.sh model claude auto     # zurück zum günstigsten
+```
+
 ## Benachrichtigungen
 
-Claude Plus bleibt still, solange nichts Ihre Aufmerksamkeit braucht, und meldet vier Dinge:
+Claude Plus bleibt still, solange nichts Ihre Aufmerksamkeit braucht, und meldet fünf Dinge:
 
 | | |
 |---|---|
 | **Abgemeldet** | Die Anmeldung eines Agenten ist abgelaufen; für ihn lässt sich nichts öffnen, bis Sie sich neu anmelden |
 | **Wiederholt fehlgeschlagen** | Mehrere Warm-ups hintereinander sind für einen Agenten fehlgeschlagen |
 | **Planer steht** | Ein geplanter Lauf ist längst überfällig, es wird also kein Fenster offen gehalten; meist läuft `atd` nicht |
-| **Wieder normal** | Es hat sich von einem der obigen Fälle erholt |
+| **Wieder normal** | Es hat sich von einem der obigen Probleme erholt |
+| **Warm-up-Modell verschwunden** | Das Modell, mit dem ein Agent aufgewärmt wurde, gibt es nicht mehr; ab jetzt wird sein eigenes Standardmodell verwendet |
 
 Jede Meldung kommt einmal je Agent, nicht bei jedem Wiederholungsversuch — ein nächtliches Problem kostet Sie also eine einzige Nachricht. Über Nutzungslimits selbst wird nie berichtet: Sie sind Alltag, und die Agenten machen danach von selbst weiter.
 

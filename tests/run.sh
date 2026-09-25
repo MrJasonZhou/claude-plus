@@ -69,9 +69,17 @@ EOF
 cat > "$FAKES/claude" <<'EOF'
 #!/usr/bin/env bash
 echo run >> "$CP_TEST/claude-runs"
+echo "$*" >> "$CP_TEST/claude-args"
 case "$(cat "$CP_TEST/claude-mode" 2>/dev/null)" in
     auth) echo "OAuth token has expired. Please run /login" >&2; exit 1 ;;
     fail) echo "API Error: Overloaded" >&2; exit 1 ;;
+    # An agent that has dropped the model it is asked for
+    badmodel)
+        if [[ "$*" == *--model* ]]; then
+            echo '[claude-code:unrecognized_model] not described by this version' >&2
+            exit 1
+        fi
+        echo OK ;;
     *)    echo OK ;;
 esac
 EOF
@@ -159,7 +167,7 @@ new_home() {
     BASE="$H/.claude/claude-plus"
     CP="$BASE/claude-plus.sh"
     ORIGFILE="$BASE/state/claude/original-statusline-command"
-    rm -f "$QUEUE"/* "$CP_TEST"/claude-mode "$CP_TEST"/claude-runs "$CP_TEST"/codex-runs "$CP_TEST"/agy-runs "$CP_TEST"/notify-*
+    rm -f "$QUEUE"/* "$CP_TEST"/claude-mode "$CP_TEST"/claude-runs "$CP_TEST"/claude-args "$CP_TEST"/codex-runs "$CP_TEST"/agy-runs "$CP_TEST"/notify-*
     AGYS="$H/.gemini/antigravity-cli/settings.json"
     echo up > "$CP_TEST/atd"
 }
@@ -754,6 +762,54 @@ install_cp >/dev/null
 check "upgrade keeps the anchor"      '[[ $(cat "$BASE/anchor") == $(at_hhmm 7200) ]]'
 install_cp uninstall >/dev/null
 check "uninstall removes it"          '[[ ! -e "$BASE" ]]'
+
+# ======================================================================
+section "a model the agent has dropped is replaced by its own default"
+
+new_home model
+with_cs
+install_cp >/dev/null
+make_notifier
+
+last_args() { tail -1 "$CP_TEST/claude-args"; }
+
+cp_run warmup claude >/dev/null
+check "warms up with the cheap model"  '[[ $(last_args) == *"--model haiku"* ]]'
+check "shown in status"                '[[ $(cp_run status) == *"Warmup model  : haiku"* ]]'
+check "and by the model command"       '[[ $(cp_run model claude) == "claude     haiku" ]]'
+
+# An ordinary failure must not be mistaken for a dead model
+echo fail > "$CP_TEST/claude-mode"
+cp_run warmup claude >/dev/null
+check "plain failure: model kept"      '[[ ! -e "$BASE/state/claude/warmup_model" && $(count model-changed notify-attempts) == 0 ]]'
+
+echo badmodel > "$CP_TEST/claude-mode"
+rm -f "$CP_TEST/claude-runs"
+cp_run warmup claude >/dev/null
+check "dead model: retried without one" '[[ $(count run claude-runs) == 2 && $(last_args) != *--model* ]]'
+check "the retry counts as a success"   '[[ $(cat "$BASE/state/claude/failure_count") == 0 ]]'
+check "the fallback is remembered"      '[[ $(cat "$BASE/state/claude/warmup_model") == "-" ]]'
+check "and announced once"              '[[ $(count model-changed notify-delivered) == 1 ]]'
+check "status says agent default"       '[[ $(cp_run status) == *"Warmup model  : (agent default)"* ]]'
+
+rm -f "$CP_TEST/claude-runs"
+cp_run warmup claude >/dev/null
+check "no second attempt at it"        '[[ $(count run claude-runs) == 1 && $(count model-changed notify-delivered) == 1 ]]'
+
+echo ok > "$CP_TEST/claude-mode"
+cp_run model claude sonnet >/dev/null
+cp_run warmup claude >/dev/null
+check "a model set by hand is used"    '[[ $(last_args) == *"--model sonnet"* ]]'
+cp_run model claude auto >/dev/null
+cp_run warmup claude >/dev/null
+check "auto goes back to the cheap one" '[[ $(last_args) == *"--model haiku"* ]]'
+check "an unknown agent is refused"     '! cp_run model nosuch x >/dev/null 2>&1'
+
+install_cp >/dev/null
+cp_run model claude default >/dev/null
+install_cp >/dev/null
+check "upgrade keeps the choice"       '[[ $(cat "$BASE/state/claude/warmup_model") == "-" ]]'
+install_cp uninstall >/dev/null
 
 # ======================================================================
 echo

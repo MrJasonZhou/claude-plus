@@ -75,16 +75,27 @@ Par défaut, une fenêtre s'ouvre dès que la précédente est réinitialisée :
 
 Une fenêtre qui courrait par-dessus cette heure l'attend : celle prévue à 03h00 couvrirait 03h00-08h00 et avalerait 06h00, elle s'ouvre donc à 06h00. Les heures qui précèdent restent alors sans fenêtre — si vous travaillez à ce moment-là, votre propre première requête en ouvre une comme d'habitude. Le réglage vaut pour tous les agents.
 
+## Modèle utilisé pour le warm-up
+
+Ouvrir une fenêtre coûte une requête : Claude Plus la réduit donc au minimum, avec le modèle le moins cher de l'agent, sans outils et sans rien écrire dans l'historique. Les modèles vont et viennent ; quand un agent ne connaît plus celui qui est utilisé, il le dit clairement — Claude Plus bascule alors sur le modèle par défaut de l'agent et vous prévient une fois, au lieu d'échouer fenêtre après fenêtre jusqu'à ce que quelqu'un lise le journal.
+
+```bash
+~/.claude/claude-plus/claude-plus.sh model                 # avec quoi chaque agent est réchauffé
+~/.claude/claude-plus/claude-plus.sh model claude sonnet   # en choisir un vous-même
+~/.claude/claude-plus/claude-plus.sh model claude auto     # revenir au moins cher
+```
+
 ## Alertes
 
-Claude Plus reste silencieux tant que rien ne requiert votre attention, et ne signale que quatre choses :
+Claude Plus reste silencieux tant que rien ne requiert votre attention, et ne signale que cinq choses :
 
 | | |
 |---|---|
 | **Déconnecté** | L'authentification d'un agent a expiré : rien ne peut être ouvert pour lui tant que vous ne vous reconnectez pas |
 | **Échecs répétés** | Plusieurs warm-ups d'affilée ont échoué pour un agent |
 | **Planificateur arrêté** | Une exécution prévue a largement dépassé son heure : aucune fenêtre n'est maintenue ouverte ; en général `atd` ne tourne pas |
-| **Retour à la normale** | Il s'est remis de l'un des cas ci-dessus |
+| **Retour à la normale** | Il s'est remis de l'un des problèmes ci-dessus |
+| **Modèle de warm-up disparu** | Le modèle avec lequel un agent était réchauffé n'existe plus ; son propre modèle par défaut est utilisé désormais |
 
 Chaque cas est signalé une seule fois par agent, pas à chaque nouvelle tentative : un problème nocturne vous coûte un unique message. Les limites d'usage elles-mêmes ne sont jamais annoncées : elles sont courantes, et les agents reprennent ensuite d'eux-mêmes.
 

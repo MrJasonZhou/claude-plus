@@ -75,16 +75,27 @@ Per impostazione predefinita una finestra si apre appena la precedente si azzera
 
 Una finestra che passerebbe sopra quell'ora la aspetta: quella prevista alle 03:00 coprirebbe 03:00-08:00 inghiottendo le 06:00, quindi si apre alle 06:00. Le ore prima restano senza finestra — se lavori in quel momento, la tua prima richiesta ne apre una come sempre. L'impostazione vale per tutti gli agenti.
 
+## Il modello usato per il warm-up
+
+Aprire una finestra costa una richiesta, quindi Claude Plus la tiene più piccola possibile: il modello più economico dell'agente, senza strumenti e senza scrivere nulla nella cronologia. I modelli vanno e vengono, e quando un agente non conosce più quello in uso lo dice chiaramente — Claude Plus passa allora al modello predefinito dell'agente e te lo segnala una volta, invece di fallire finestra dopo finestra finché qualcuno non legge il log.
+
+```bash
+~/.claude/claude-plus/claude-plus.sh model                 # con che cosa si scalda ogni agente
+~/.claude/claude-plus/claude-plus.sh model claude sonnet   # sceglierne uno tu
+~/.claude/claude-plus/claude-plus.sh model claude auto     # tornare al più economico
+```
+
 ## Avvisi
 
-Claude Plus resta in silenzio finché non serve il tuo intervento, e segnala quattro cose:
+Claude Plus resta in silenzio finché non serve il tuo intervento, e segnala cinque cose:
 
 | | |
 |---|---|
 | **Disconnesso** | L'accesso di un agente è scaduto: per lui non si può aprire nulla finché non rientri |
 | **Fallimenti ripetuti** | Diversi warm-up di fila sono falliti per un agente |
 | **Pianificatore fermo** | Un'esecuzione pianificata è molto in ritardo, quindi nessuna finestra viene tenuta aperta; di solito `atd` non è in esecuzione |
-| **Tornato normale** | Si è ripreso da uno dei casi sopra |
+| **Tornato normale** | Si è ripreso da uno dei problemi sopra |
+| **Modello di warm-up sparito** | Il modello con cui un agente veniva scaldato non esiste più, quindi d'ora in poi si usa il suo predefinito |
 
 Ogni cosa viene segnalata una volta sola per agente, non a ogni nuovo tentativo: un problema notturno ti costa un unico messaggio. I limiti d'uso in sé non vengono mai annunciati: sono ordinaria amministrazione, e gli agenti riprendono da soli dopo di essi.
 

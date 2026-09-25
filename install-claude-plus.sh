@@ -522,7 +522,7 @@ cat > "$BIN" <<'CLAUDE_PLUS'
 # option) any later version. See the LICENSE file for details.
 set -u
 
-VERSION="4.0.0"
+VERSION="4.1.0"
 
 BASE="$HOME/.claude/claude-plus"
 STATE="$BASE/state"
@@ -594,6 +594,18 @@ default_warmup() {
     return 1
 }
 
+# The cheapest model worth warming up with, if the agent takes one at all.
+# Empty means whatever the agent would pick for itself.
+default_cheap_model() {
+    printf '\n'
+}
+
+# Does this output say the model id is not one the agent knows? Models come
+# and go; an agent that has dropped one says so plainly.
+default_unknown_model() {
+    grep -Eqi 'unrecognized_model|unknown model|model.*(does not exist|may not exist|not found|described by this version)'
+}
+
 default_parse_limits() {
     cat >/dev/null
     printf '{}\n'
@@ -623,6 +635,21 @@ pget() {
 pset() {
     mkdir -p "$STATE/$1"
     printf '%s\n' "$3" > "$STATE/$1/$2"
+}
+
+# The model this provider warms up with. Unset means its own choice; "-"
+# means the agent's default, which is where a fallback lands.
+warmup_model() {
+    local stored
+    stored="$(pget "$1" warmup_model)"
+
+    if [[ -z "$stored" ]]; then
+        provider_call "$1" cheap_model
+    elif [[ "$stored" == "-" ]]; then
+        printf '\n'
+    else
+        printf '%s\n' "$stored"
+    fi
 }
 
 # How long a short window lasts for this provider, as last observed
@@ -992,11 +1019,26 @@ do_warmup() {
         return 0
     fi
 
-    local started output rc
+    local started output rc model
     started="$(date +%s)"
+    model="$(warmup_model "$id")"
 
-    output="$(provider_call "$id" warmup)"
+    output="$(provider_call "$id" warmup "$model")"
     rc=$?
+
+    # When the agent no longer knows this model, drop to the one it picks for
+    # itself and remember that, rather than failing every window until
+    # someone reads the log.
+    if (( rc != 0 )) && [[ -n "$model" ]] &&
+       printf '%s\n' "$output" | provider_call "$id" unknown_model; then
+        log "[$id] Model '$model' is gone; falling back to the agent's own default"
+        pset "$id" warmup_model "-"
+        notify "model-changed" \
+            "$(provider_call "$id" label) no longer knows the model Claude Plus warmed up with ($model), so it has switched to the agent's default. Pick another with: claude-plus.sh model $id <name>" || true
+
+        output="$(provider_call "$id" warmup "")"
+        rc=$?
+    fi
 
     if (( rc == 0 )); then
         pset "$id" last_success "$started"
@@ -1152,6 +1194,7 @@ show_status() {
             echo "  Scheduled     : none"
         fi
 
+        echo "  Warmup model  : $(warmup_model "$id" | sed 's/^$/(agent default)/')"
         echo "  Failures      : ${failures:-0}   auth: $([[ -f "$dir/auth_required" ]] && echo 'RELOGIN MAY BE REQUIRED' || echo OK)"
 
         if [[ "$last_run" =~ ^[0-9]+$ ]]; then
@@ -1213,6 +1256,33 @@ set_anchor() {
     done
 }
 
+# Show or set the model an agent warms up with
+set_warmup_model() {
+    local id="${1:-}" value="${2:-}"
+
+    if [[ -z "$id" ]]; then
+        for id in $(active_providers); do
+            printf '%-10s %s\n' "$id" "$(warmup_model "$id" | sed 's/^$/(agent default)/')"
+        done
+        return 0
+    fi
+
+    if ! provider_defines "$id" available; then
+        echo "Unknown agent: $id" >&2
+        return 2
+    fi
+
+    case "$value" in
+        "")      printf '%-10s %s\n' "$id" "$(warmup_model "$id" | sed 's/^$/(agent default)/')" ;;
+        auto)    rm -f "$(pstate "$id")/warmup_model"
+                 echo "$id warms up with $(warmup_model "$id" | sed 's/^$/the agent default/') again." ;;
+        default) pset "$id" warmup_model "-"
+                 echo "$id warms up with the agent's own default." ;;
+        *)       pset "$id" warmup_model "$value"
+                 echo "$id warms up with $value." ;;
+    esac
+}
+
 notify_test() {
     if [[ ! -x "$NOTIFY" ]]; then
         echo "No executable notify script at $NOTIFY" >&2
@@ -1267,6 +1337,9 @@ case "${1:-}" in
     anchor)
         set_anchor "${2:-}"
         ;;
+    model)
+        set_warmup_model "${2:-}" "${3:-}"
+        ;;
     notify-test)
         notify_test
         ;;
@@ -1277,6 +1350,7 @@ case "${1:-}" in
         echo "Usage: $0 {statusline|observe|warmup|scheduled} [provider]" >&2
         echo "       $0 {reschedule|scheduler-check|status|providers|notify-test|version}" >&2
         echo "       $0 anchor [HH:MM|off]" >&2
+        echo "       $0 model [agent [name|auto|default]]" >&2
         exit 2
         ;;
 esac
@@ -1314,18 +1388,19 @@ claude_parse_limits() {
     } | with_entries(select(.value != null))' 2>/dev/null
 }
 
-# The smallest request that still opens a window: one Haiku turn, no tools,
-# nothing written to session history
+claude_cheap_model() {
+    printf 'haiku\n'
+}
+
+# The smallest request that still opens a window: one turn, no tools, nothing
+# written to session history. No model given means Claude Code picks.
 claude_warmup() {
-    timeout 180 claude \
-        --safe-mode \
-        -p \
-        --model haiku \
-        --tools "" \
-        --no-session-persistence \
-        --max-turns 1 \
-        'Reply only OK.' \
-        2>&1
+    local model="${1:-}"
+    local args=(--safe-mode -p --tools "" --no-session-persistence --max-turns 1)
+
+    [[ -n "$model" ]] && args+=(--model "$model")
+
+    timeout 180 claude "${args[@]}" 'Reply only OK.' 2>&1
 }
 PROVIDER_CLAUDE
 
@@ -1371,11 +1446,12 @@ codex_pull_limits() {
 }
 
 codex_warmup() {
-    timeout 180 codex exec \
-        --skip-git-repo-check \
-        -s read-only \
-        'Reply only OK.' \
-        2>&1
+    local model="${1:-}"
+    local args=(exec --skip-git-repo-check -s read-only)
+
+    [[ -n "$model" ]] && args+=(-m "$model")
+
+    timeout 180 codex "${args[@]}" 'Reply only OK.' 2>&1
 }
 PROVIDER_CODEX
 
@@ -1417,7 +1493,12 @@ agy_parse_limits() {
 }
 
 agy_warmup() {
-    timeout 180 agy -p 'Reply only OK.' 2>&1
+    local model="${1:-}"
+    local args=(-p)
+
+    [[ -n "$model" ]] && args+=(--model "$model")
+
+    timeout 180 agy "${args[@]}" 'Reply only OK.' 2>&1
 }
 PROVIDER_AGY
 

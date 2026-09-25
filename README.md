@@ -75,16 +75,27 @@ By default a window opens as soon as the last one resets, so the chain follows w
 
 A window that would run across the anchor waits for it instead: one due at 03:00 would cover 03:00-08:00 and swallow 06:00, so it opens at 06:00. The hours before the anchor are then left without a window — if you work in them, your own first request opens one as usual. The anchor applies to every agent.
 
+## Warm-up model
+
+Opening a window costs one request, so Claude Plus keeps it as small as it can: the cheapest model the agent offers, no tools, nothing written to history. Models come and go, and when an agent no longer knows the one in use it says so plainly — Claude Plus then switches to the agent's own default and tells you, instead of failing window after window until someone reads the log.
+
+```bash
+~/.claude/claude-plus/claude-plus.sh model                 # what each agent warms up with
+~/.claude/claude-plus/claude-plus.sh model claude sonnet   # choose one yourself
+~/.claude/claude-plus/claude-plus.sh model claude auto     # back to the cheapest
+```
+
 ## Alerts
 
-Claude Plus stays quiet unless something needs you, and tells you about four things:
+Claude Plus stays quiet unless something needs you, and tells you about five things:
 
 | | |
 |---|---|
 | **Signed out** | An agent's login has expired, so nothing can be opened for it until you sign in again |
 | **Repeatedly failing** | Several warm-ups in a row have failed for one agent |
 | **Scheduler stopped** | A planned run is long overdue, so no window is being kept open; usually `atd` is not running |
-| **Back to normal** | It recovered from any of the above |
+| **Back to normal** | It recovered from any of the problems above |
+| **Warm-up model gone** | The model an agent was warmed up with no longer exists, so its own default is used from now on |
 
 Each one is announced once per agent, not on every retry, so a problem overnight costs you a single message. Usage limits themselves are never announced: they are routine, and the agents pick up after them on their own.
 
