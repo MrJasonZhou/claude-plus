@@ -97,7 +97,7 @@ Claude Plus stays quiet unless something needs you, and tells you about five thi
 | **Back to normal** | It recovered from any of the problems above |
 | **Warm-up model gone** | The model an agent was warmed up with no longer exists, so its own default is used from now on |
 
-Each one is announced once per agent, not on every retry, so a problem overnight costs you a single message. Usage limits themselves are never announced: they are routine, and the agents pick up after them on their own.
+Each one is announced once per agent, not on every retry, so a problem overnight costs you a single message. A failure that passes on its own costs nothing at all: a signed-out agent is reported only once a later retry has failed too. Usage limits themselves are never announced: they are routine, and the agents pick up after them on their own.
 
 To choose how you hear about it, copy one of the samples and fill in your own key or server:
 

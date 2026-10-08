@@ -38,7 +38,7 @@ the rest have defaults.
 | `<id>_parse_limits` | the agent's own JSON on stdin | the fields above as JSON, omitting what it does not know |
 | `<id>_warmup` | a model id, possibly empty | runs the smallest possible request; output on stdout, exit code decides |
 | `<id>_cheap_model` | — | the cheapest model worth warming up with; empty to let the agent choose |
-| `<id>_auth_failed` | warmup output on stdin | exit 0 when the failure is an expired login |
+| `<id>_auth_failed` | warmup output on stdin | exit 0 only when the login is really gone and someone must sign in again |
 | `<id>_unknown_model` | warmup output on stdin | exit 0 when the failure is a model the agent no longer knows |
 | `<id>_pull_limits` | — | the agent's own JSON, for agents that cannot push (see below) |
 
@@ -53,6 +53,15 @@ than metering quota (Kimi Code) wastes nothing when it goes unused, and an
 agent with one shared weekly pool and no short window (Grok Build) has no
 window to keep open. Those providers declare `alert` alone, and the core never
 schedules a warmup for them.
+
+### Telling a dead login from a bad minute
+
+`<id>_auth_failed` decides whether a human is woken up, so it must match only
+the wording an agent uses for a login that is actually gone. Agents have
+separate wording for a token refresh that failed this once, or that lost a
+cross-process lock to another instance of the same agent; both come back on
+their own and belong in the ordinary retry path. The core helps either way: it
+rechecks an hour later and reports nothing unless that recheck fails too.
 
 ### The warmup model
 

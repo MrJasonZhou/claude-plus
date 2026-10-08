@@ -97,7 +97,7 @@ Claude Plus bleibt still, solange nichts Ihre Aufmerksamkeit braucht, und meldet
 | **Wieder normal** | Es hat sich von einem der obigen Probleme erholt |
 | **Warm-up-Modell verschwunden** | Das Modell, mit dem ein Agent aufgewärmt wurde, gibt es nicht mehr; ab jetzt wird sein eigenes Standardmodell verwendet |
 
-Jede Meldung kommt einmal je Agent, nicht bei jedem Wiederholungsversuch — ein nächtliches Problem kostet Sie also eine einzige Nachricht. Über Nutzungslimits selbst wird nie berichtet: Sie sind Alltag, und die Agenten machen danach von selbst weiter.
+Jede Meldung kommt einmal je Agent, nicht bei jedem Wiederholungsversuch — ein nächtliches Problem kostet Sie also eine einzige Nachricht. Ein Fehler, der von selbst vergeht, kostet gar keine: Dass ein Agent abgemeldet ist, wird erst gemeldet, wenn auch ein späterer Versuch fehlschlägt. Über Nutzungslimits selbst wird nie berichtet: Sie sind Alltag, und die Agenten machen danach von selbst weiter.
 
 Um zu wählen, wie Sie davon erfahren, kopieren Sie eine der Vorlagen und tragen Ihren eigenen Schlüssel oder Server ein:
 

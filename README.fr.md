@@ -97,7 +97,7 @@ Claude Plus reste silencieux tant que rien ne requiert votre attention, et ne si
 | **Retour à la normale** | Il s'est remis de l'un des problèmes ci-dessus |
 | **Modèle de warm-up disparu** | Le modèle avec lequel un agent était réchauffé n'existe plus ; son propre modèle par défaut est utilisé désormais |
 
-Chaque cas est signalé une seule fois par agent, pas à chaque nouvelle tentative : un problème nocturne vous coûte un unique message. Les limites d'usage elles-mêmes ne sont jamais annoncées : elles sont courantes, et les agents reprennent ensuite d'eux-mêmes.
+Chaque cas est signalé une seule fois par agent, pas à chaque nouvelle tentative : un problème nocturne vous coûte un unique message. Une panne qui se résout d'elle-même n'en coûte aucun : un agent déconnecté n'est signalé qu'après l'échec d'une tentative ultérieure. Les limites d'usage elles-mêmes ne sont jamais annoncées : elles sont courantes, et les agents reprennent ensuite d'eux-mêmes.
 
 Pour choisir comment en être informé, copiez l'un des exemples et renseignez votre clé ou votre serveur :
 

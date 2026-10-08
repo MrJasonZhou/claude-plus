@@ -522,7 +522,7 @@ cat > "$BIN" <<'CLAUDE_PLUS'
 # option) any later version. See the LICENSE file for details.
 set -u
 
-VERSION="4.1.0"
+VERSION="4.1.1"
 
 BASE="$HOME/.claude/claude-plus"
 STATE="$BASE/state"
@@ -1055,11 +1055,17 @@ do_warmup() {
     fi
 
     if printf '%s\n' "$output" | provider_call "$id" auth_failed; then
-        pset "$id" auth_required "$(date +%s)"
+        local seen
+        seen="$(pget "$id" auth_required)"
+        pset "$id" auth_required "${seen:-$now}"
         log "[$id] Authentication required; warmups paused output=$(printf '%s' "$output" | tr '\n' ' ' | cut -c1-300)"
 
-        notify_once "$dir" auth "auth-required" \
-            "$(provider_call "$id" label) is no longer authenticated, so Claude Plus has stopped opening windows for it. Sign in again."
+        # A sign-in can come back on its own, so the recheck below has to fail
+        # too before this is worth a message. The first one is only logged.
+        if [[ -n "$seen" ]]; then
+            notify_once "$dir" auth "auth-required" \
+                "$(provider_call "$id" label) is no longer authenticated, so Claude Plus has stopped opening windows for it. Sign in again."
+        fi
 
         # Leave room to recover on its own if the failure was temporary
         arm_job "$id" "$((now + 3600))" "auth-recheck"
@@ -1386,6 +1392,14 @@ claude_parse_limits() {
         long_used_percent: .rate_limits.seven_day.used_percentage,
         long_resets_at: .rate_limits.seven_day.resets_at
     } | with_entries(select(.value != null))' 2>/dev/null
+}
+
+# Claude Code words a dead session differently from a refresh that merely
+# failed this once ("session expired and could not be refreshed") or lost the
+# cross-process refresh lock to another Claude Code. Only the first means
+# anyone has to sign in again; the others are worth a retry, not a message.
+claude_auth_failed() {
+    grep -Eqi 'refresh token.*no longer valid|run /login|token_revoked|not logged in|invalid_credential'
 }
 
 claude_cheap_model() {

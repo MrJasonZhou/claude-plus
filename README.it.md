@@ -97,7 +97,7 @@ Claude Plus resta in silenzio finché non serve il tuo intervento, e segnala cin
 | **Tornato normale** | Si è ripreso da uno dei problemi sopra |
 | **Modello di warm-up sparito** | Il modello con cui un agente veniva scaldato non esiste più, quindi d'ora in poi si usa il suo predefinito |
 
-Ogni cosa viene segnalata una volta sola per agente, non a ogni nuovo tentativo: un problema notturno ti costa un unico messaggio. I limiti d'uso in sé non vengono mai annunciati: sono ordinaria amministrazione, e gli agenti riprendono da soli dopo di essi.
+Ogni cosa viene segnalata una volta sola per agente, non a ogni nuovo tentativo: un problema notturno ti costa un unico messaggio. Un guasto che si risolve da sé non te ne costa nessuno: che un agente sia disconnesso viene segnalato solo dopo che è fallito anche un tentativo successivo. I limiti d'uso in sé non vengono mai annunciati: sono ordinaria amministrazione, e gli agenti riprendono da soli dopo di essi.
 
 Per scegliere come riceverlo, copia uno degli esempi e inserisci la tua chiave o il tuo server:
 

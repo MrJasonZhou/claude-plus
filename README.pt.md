@@ -97,7 +97,7 @@ O Claude Plus fica quieto enquanto nada precisa de você, e informa cinco coisas
 | **De volta ao normal** | Ele se recuperou de qualquer um dos problemas acima |
 | **Modelo de warm-up sumiu** | O modelo com que um agente era aquecido não existe mais, então a partir de agora usa-se o padrão dele |
 
-Cada um é anunciado uma única vez por agente, não a cada nova tentativa: um problema durante a noite custa uma só mensagem. Os limites de uso em si nunca são anunciados: são rotina, e os agentes retomam sozinhos depois deles.
+Cada um é anunciado uma única vez por agente, não a cada nova tentativa: um problema durante a noite custa uma só mensagem. Uma falha que se resolve sozinha não custa nenhuma: que um agente está desconectado só é avisado depois que uma tentativa posterior também falha. Os limites de uso em si nunca são anunciados: são rotina, e os agentes retomam sozinhos depois deles.
 
 Para escolher como receber o aviso, copie um dos exemplos e preencha sua chave ou servidor:
 

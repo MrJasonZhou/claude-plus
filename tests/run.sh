@@ -71,7 +71,11 @@ cat > "$FAKES/claude" <<'EOF'
 echo run >> "$CP_TEST/claude-runs"
 echo "$*" >> "$CP_TEST/claude-args"
 case "$(cat "$CP_TEST/claude-mode" 2>/dev/null)" in
-    auth) echo "OAuth token has expired. Please run /login" >&2; exit 1 ;;
+    auth) echo "OAuth refresh token is no longer valid; run /login to re-authenticate" >&2; exit 1 ;;
+    # A refresh that failed this once, and one that lost the refresh lock:
+    # Claude Code's own wording for both
+    transient) echo "Failed to authenticate: OAuth session expired and could not be refreshed" >&2; exit 1 ;;
+    lockheld)  echo "OAuth access token could not be refreshed: another Claude Code process is holding the refresh lock" >&2; exit 1 ;;
     fail) echo "API Error: Overloaded" >&2; exit 1 ;;
     # An agent that has dropped the model it is asked for
     badmodel)
@@ -514,6 +518,38 @@ for _ in 1 2; do cp_run warmup claude >/dev/null; done
 check "two failures: quiet"              '[[ $(count warmup-failing notify-attempts) == 0 ]]'
 cp_run warmup claude >/dev/null
 check "third failure: announced"         '[[ $(count warmup-failing notify-delivered) == 1 && -e "$BASE/state/claude/notified-failing" ]]'
+
+# ======================================================================
+section "a refresh that fixes itself is never an alert"
+
+new_home authwait
+echo '{}' > "$S"
+install_cp >/dev/null
+make_notifier
+
+echo transient > "$CP_TEST/claude-mode"
+cp_run warmup claude >/dev/null
+check "a one-off refresh failure is not a dead session" '[[ ! -e "$BASE/state/claude/auth_required" && $(cat "$BASE/state/claude/failure_count") == 1 ]]'
+
+echo lockheld > "$CP_TEST/claude-mode"
+cp_run warmup claude >/dev/null
+check "losing the refresh lock is not either"           '[[ ! -e "$BASE/state/claude/auth_required" ]]'
+check "neither of them wakes anyone"                    '[[ $(count auth-required notify-attempts) == 0 ]]'
+
+echo auth > "$CP_TEST/claude-mode"
+cp_run warmup claude >/dev/null
+check "a dead session: noticed and rechecked"           '[[ -e "$BASE/state/claude/auth_required" && $(cat "$BASE/state/claude/at_reason") == auth-recheck ]]'
+check "but still quiet the first time"                  '[[ $(count auth-required notify-attempts) == 0 ]]'
+
+cp_run warmup claude >/dev/null
+check "announced once the recheck fails too"            '[[ $(count auth-required notify-delivered) == 1 ]]'
+check "and the first failure time is kept"              '[[ $(cat "$BASE/state/claude/auth_required") -le $(date +%s) ]]'
+
+echo ok > "$CP_TEST/claude-mode"
+cp_run warmup claude >/dev/null
+check "signing in again clears it and says so"          '[[ ! -e "$BASE/state/claude/auth_required" && $(count recovered notify-delivered) == 1 ]]'
+
+install_cp uninstall >/dev/null
 
 # ======================================================================
 section "a scheduler that is not running gets noticed"
