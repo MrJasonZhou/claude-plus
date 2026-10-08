@@ -1,6 +1,6 @@
 # Claude Plus
 
-[English](README.md) | 简体中文 | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Italiano](README.it.md) | [Português](README.pt.md) | [العربية](README.ar.md)
+[English](README.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Italiano](README.it.md) | [Português](README.pt.md) | [العربية](README.ar.md) | 简体中文 | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md)
 
 你的编码助手不会替你做的两件事，在你不在键盘前的时候完成。
 
